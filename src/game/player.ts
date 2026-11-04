@@ -49,6 +49,10 @@ export class PlayerEntity {
   diveTimer = 0
   diveDir = 1
   tackleCd = 0
+  /** tarjetas acumuladas (2 amarillas = roja) */
+  yellowCards = 0
+  /** expulsado: sale del campo y su equipo juega con uno menos */
+  sentOff = false
   /** objetivo táctico actual (IA) */
   targetX = 0
   targetZ = 0
@@ -158,7 +162,22 @@ export class PlayerEntity {
     this.vz = (dz / len) * PLAYER.slideSpeed
   }
 
+  /** Expulsión: desaparece del campo y deja de participar de la simulación. */
+  sendOff() {
+    this.sentOff = true
+    this.root.visible = false
+    this.x = -6
+    this.z = -6
+    this.vx = 0
+    this.vz = 0
+    this.hasBall = false
+    this.stunTimer = 0
+    this.slideTimer = 0
+    this.diveTimer = 0
+  }
+
   update(dt: number) {
+    if (this.sentOff) return
     this.kickCooldown = Math.max(0, this.kickCooldown - dt)
     this.kickAnim = Math.max(0, this.kickAnim - dt)
     this.slideCd = Math.max(0, this.slideCd - dt)

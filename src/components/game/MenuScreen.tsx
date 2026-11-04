@@ -212,8 +212,14 @@ export function ControlsTable() {
       </p>
       <p className="text-xs leading-relaxed text-white/45">
         <b className="text-amber-300">Cansancio:</b> esprintar agota la resistencia y tus jugadores corren menos;
-        en la pausa podés hacer hasta <b className="text-amber-300">3 cambios</b> para meter piernas frescas (la CPU
-        también cambia a sus cansados). En el mediempo todos recuperan aire.
+        en la pausa podés hacer hasta <b className="text-amber-300">5 cambios</b> (con 12 suplentes) para meter piernas
+        frescas (la CPU también cambia a sus cansados). En el mediempo todos recuperan aire.
+      </p>
+      <p className="text-xs leading-relaxed text-white/45">
+        <b className="text-amber-300">Faltas:</b> si tu barrida o tu quite golpean al rival antes que al balón, el
+        árbitro pita la falta. Las entradas duras o por detrás traen <b className="text-amber-300">amarilla</b> y la
+        segunda es <b className="text-rose-300">roja</b>: tu equipo queda con uno menos. Falta en el área ={' '}
+        <b className="text-rose-300">penal</b>; en el resto de la cancha, tiro libre con barrera.
       </p>
     </div>
   )

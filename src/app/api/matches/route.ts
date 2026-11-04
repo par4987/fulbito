@@ -60,6 +60,12 @@ const createMatchSchema = z.object({
     .number()
     .int('Los tiros a puerta visitantes deben ser un entero')
     .min(0, 'Los tiros a puerta visitantes no pueden ser negativos'),
+  foulsHome: z.number().int('Las faltas locales deben ser un entero').min(0).max(60).default(0),
+  foulsAway: z.number().int('Las faltas visitantes deben ser un entero').min(0).max(60).default(0),
+  yellowsHome: z.number().int('Las amarillas locales deben ser un entero').min(0).max(20).default(0),
+  yellowsAway: z.number().int('Las amarillas visitantes deben ser un entero').min(0).max(20).default(0),
+  redsHome: z.number().int('Las rojas locales deben ser un entero').min(0).max(11).default(0),
+  redsAway: z.number().int('Las rojas visitantes deben ser un entero').min(0).max(11).default(0),
   events: z
     .string()
     .min(1, 'Los eventos no pueden estar vacíos')

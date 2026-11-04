@@ -1,8 +1,9 @@
 export type TeamIndex = 0 | 1
 export type Role = 'GK' | 'DF' | 'MF' | 'FW'
 export type Difficulty = 'amateur' | 'profesional' | 'leyenda'
-export type Phase = 'kickoff' | 'play' | 'goal' | 'restart' | 'half' | 'full'
+export type Phase = 'kickoff' | 'play' | 'goal' | 'restart' | 'freekick' | 'penalty' | 'half' | 'full'
 export type CameraMode = 'broadcast' | 'cerca' | 'aerea' | 'arco'
+export type CardKind = 'amarilla' | 'roja'
 
 export interface PlayerData {
   num: number
@@ -58,9 +59,12 @@ export interface HudState {
   possession: [number, number]
   shots: [number, number]
   onTarget: [number, number]
+  fouls: [number, number]
   events: MatchEvent[]
   controlled: { name: string; num: number; stamina: number } | null
   goalOverlay: { team: TeamIndex; scorer: string } | null
+  cardOverlay: { kind: CardKind; player: string; team: TeamIndex } | null
+  setPiece: { type: 'freekick' | 'penalty'; team: TeamIndex } | null
   cameraMode: CameraMode
   muted: boolean
 }
@@ -76,7 +80,7 @@ export interface SubPlayerInfo {
 export interface SubState {
   used: number
   max: number
-  onField: Array<SubPlayerInfo & { stamina: number; gk: boolean }>
+  onField: Array<SubPlayerInfo & { stamina: number; gk: boolean; sentOff: boolean }>
   bench: Array<SubPlayerInfo & { available: boolean }>
 }
 
@@ -89,6 +93,9 @@ export interface FullTimeResult {
   possession: [number, number]
   shots: [number, number]
   onTarget: [number, number]
+  fouls: [number, number]
+  yellows: [number, number]
+  reds: [number, number]
   events: MatchEvent[]
   difficulty: Difficulty
   durationSec: number

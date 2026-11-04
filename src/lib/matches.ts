@@ -27,6 +27,13 @@ export interface MatchResultInput {
   shotsAway: number
   shotsOnTargetHome: number
   shotsOnTargetAway: number
+  /** faltas y tarjetas por equipo (local / visitante) */
+  foulsHome: number
+  foulsAway: number
+  yellowsHome: number
+  yellowsAway: number
+  redsHome: number
+  redsAway: number
   events: string
 }
 
@@ -44,6 +51,12 @@ export interface MatchResultRecord {
   shotsAway: number
   shotsOnTargetHome: number
   shotsOnTargetAway: number
+  foulsHome: number
+  foulsAway: number
+  yellowsHome: number
+  yellowsAway: number
+  redsHome: number
+  redsAway: number
   events: string
   createdAt: string
 }
@@ -72,6 +85,12 @@ export function serializeMatch(row: {
   shotsAway: number
   shotsOnTargetHome: number
   shotsOnTargetAway: number
+  foulsHome: number
+  foulsAway: number
+  yellowsHome: number
+  yellowsAway: number
+  redsHome: number
+  redsAway: number
   events: string
   createdAt: Date
 }): MatchResultRecord {
@@ -88,6 +107,12 @@ export function serializeMatch(row: {
     shotsAway: row.shotsAway,
     shotsOnTargetHome: row.shotsOnTargetHome,
     shotsOnTargetAway: row.shotsOnTargetAway,
+    foulsHome: row.foulsHome,
+    foulsAway: row.foulsAway,
+    yellowsHome: row.yellowsHome,
+    yellowsAway: row.yellowsAway,
+    redsHome: row.redsHome,
+    redsAway: row.redsAway,
     events: row.events,
     createdAt: row.createdAt.toISOString(),
   }

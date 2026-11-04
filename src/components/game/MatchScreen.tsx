@@ -67,6 +67,12 @@ export default function MatchScreen({ homeId, awayId, settings, onExit }: Props)
           shotsAway: r.shots[1],
           shotsOnTargetHome: r.onTarget[0],
           shotsOnTargetAway: r.onTarget[1],
+          foulsHome: r.fouls[0],
+          foulsAway: r.fouls[1],
+          yellowsHome: r.yellows[0],
+          yellowsAway: r.yellows[1],
+          redsHome: r.reds[0],
+          redsAway: r.reds[1],
           events: JSON.stringify(r.events.map((e) => `${e.minute}' — ${e.text}`)),
         }),
       })
@@ -306,6 +312,53 @@ export default function MatchScreen({ homeId, awayId, settings, onExit }: Props)
         </div>
       )}
 
+      {/* overlay de tarjeta (amarilla / roja) */}
+      {hud?.cardOverlay && !result && (
+        <div className="pointer-events-none absolute left-1/2 top-14 z-40 -translate-x-1/2 sm:top-20">
+          <div className="fp3d-fade-up flex items-center gap-3 rounded-xl border border-white/15 bg-black/80 px-4 py-2.5 shadow-xl backdrop-blur-sm">
+            <span
+              className={`h-10 w-7 shrink-0 rounded-[4px] border border-black/30 ${
+                hud.cardOverlay.kind === 'amarilla' ? 'bg-amber-300' : 'bg-rose-500'
+              }`}
+            />
+            <div className="text-white">
+              <div
+                className={`text-sm font-black uppercase tracking-wider ${
+                  hud.cardOverlay.kind === 'amarilla' ? 'text-amber-300' : 'text-rose-400'
+                }`}
+              >
+                {hud.cardOverlay.kind === 'amarilla' ? 'Tarjeta amarilla' : '¡Tarjeta roja! Expulsado'}
+              </div>
+              <div className="text-xs font-bold text-white/75">
+                {hud.cardOverlay.player} · {hud.cardOverlay.team === 0 ? home.short : away.short}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* banner de tiro libre / penal */}
+      {hud?.setPiece && (hud.phase === 'freekick' || hud.phase === 'penalty') && !result && (
+        <div className="pointer-events-none absolute left-1/2 top-2 z-30 -translate-x-1/2 text-center sm:top-3">
+          <div
+            className={`rounded-lg px-4 py-1.5 text-base font-black italic uppercase tracking-wider shadow-lg sm:text-xl ${
+              hud.setPiece.type === 'penalty'
+                ? 'bg-rose-600/90 text-white'
+                : 'bg-black/70 text-amber-300'
+            }`}
+          >
+            {hud.setPiece.type === 'penalty'
+              ? `¡Penal ${hud.setPiece.team === 0 ? 'para vos' : `para ${away.short}!`}`
+              : `Tiro libre ${hud.setPiece.team === 0 ? 'para vos' : `de ${away.short}`}`}
+          </div>
+          {hud.setPiece.team === 0 && (
+            <div className="mt-1 inline-block rounded bg-black/60 px-2.5 py-1 text-[10px] font-bold text-white/80 sm:text-[11px]">
+              Z: cargar y soltar para disparar · X: pase · C: centro
+            </div>
+          )}
+        </div>
+      )}
+
       {/* overlay de mediempo */}
       {hud?.phase === 'half' && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-[2px]">
@@ -427,7 +480,7 @@ function HudBtn({
   )
 }
 
-/** Panel de cambios: elige titular que sale + suplente que entra (máx. 3 por equipo). */
+/** Panel de cambios: elige titular que sale + suplente que entra (máx. 5 por equipo). */
 function SubsPanel({
   state,
   onConfirm,
@@ -479,7 +532,7 @@ function SubsPanel({
         </span>
       </div>
       <p className="mt-1 text-[11px] text-white/45">
-        Elegí quién sale y quién entra. El suplente entra fresco (resistencia 100).
+        Elegí quién sale y quién entra. El suplente entra fresco (resistencia 100). Tenés 12 suplentes y 5 cambios.
       </p>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -489,19 +542,32 @@ function SubsPanel({
           <div className="fp3d-scroll max-h-56 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.03] p-1.5 sm:max-h-64">
             {state.onField.map((p) => {
               const sel = p.idx === outIdx
+              const off = p.sentOff
               return (
                 <button
                   key={p.idx}
+                  disabled={off}
                   onClick={() => setOutIdx(sel ? null : p.idx)}
                   className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition ${
-                    sel ? 'bg-amber-400/20 ring-1 ring-amber-300' : 'hover:bg-white/5'
+                    off
+                      ? 'cursor-not-allowed opacity-40'
+                      : sel
+                        ? 'bg-amber-400/20 ring-1 ring-amber-300'
+                        : 'hover:bg-white/5'
                   }`}
                 >
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/12 text-[10px] font-black">
                     {p.num}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-bold">{p.name}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate text-xs font-bold">{p.name}</span>
+                      {off && (
+                        <span className="shrink-0 rounded bg-rose-500/25 px-1 text-[8px] font-black uppercase text-rose-300">
+                          expulsado
+                        </span>
+                      )}
+                    </span>
                     <span className="mt-0.5 block h-1 w-full overflow-hidden rounded-full bg-white/10">
                       <span
                         className={`block h-full rounded-full ${
@@ -664,6 +730,9 @@ function FullTimePanel({
           <StatBar label="Posesión" hv={result.possession[0]} av={result.possession[1]} suffix="%" />
           <StatBar label="Tiros" hv={result.shots[0]} av={result.shots[1]} />
           <StatBar label="Tiros al arco" hv={result.onTarget[0]} av={result.onTarget[1]} />
+          <StatBar label="Faltas" hv={result.fouls[0]} av={result.fouls[1]} />
+          <StatBar label="Amarillas" hv={result.yellows[0]} av={result.yellows[1]} />
+          <StatBar label="Rojas" hv={result.reds[0]} av={result.reds[1]} />
         </div>
 
         {/* eventos */}

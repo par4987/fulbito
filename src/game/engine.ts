@@ -242,6 +242,9 @@ export class GameEngine {
       events: m.events.slice(-6),
       controlled: c ? { name: c.data.name, num: c.data.num, stamina: Math.round(c.stamina) } : null,
       goalOverlay: m.goalInfo,
+      cardOverlay: m.cardOverlay,
+      setPiece: m.setPieceInfo ? { type: m.setPieceInfo.type, team: m.setPieceInfo.team } : null,
+      fouls: [m.squad(0).fouls, m.squad(1).fouls],
       cameraMode: this.scene3d.mode,
       muted: this.audio.muted,
     })
@@ -276,6 +279,7 @@ export class GameEngine {
     for (const t of [0, 1] as TeamIndex[]) {
       const color = t === 0 ? '#ffd94a' : '#ff5a5a'
       for (const p of m.squad(t).players) {
+        if (p.sentOff) continue
         ctx.fillStyle = color
         ctx.beginPath()
         ctx.arc(X(p.x), Z(p.z), t === 0 ? 3.4 : 3, 0, Math.PI * 2)

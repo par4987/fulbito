@@ -23,14 +23,14 @@ export function updateMatchAI(m: Match, dt: number) {
 
     // --- portero
     const gk = sq.players[0]
-    if (gk !== m.controlled && m.owner !== gk) updateGK(m, gk, ownGoalX, speedMult)
+    if (!gk.sentOff && gk !== m.controlled && m.owner !== gk) updateGK(m, gk, ownGoalX, speedMult)
 
     // --- selección de perseguidor
     const fut = ball.future(0.3)
     let chaser: PlayerEntity | null = m.aiPassHint && m.aiPassHint.team === t && !m.owner ? m.aiPassHint : null
     let cover: PlayerEntity | null = null
     if (!hasBall) {
-      const candidates = sq.players.filter((p) => !p.isGK && p !== m.controlled && p !== chaser)
+      const candidates = sq.players.filter((p) => !p.isGK && !p.sentOff && p !== m.controlled && p !== chaser)
       const sorted = [...candidates].sort(
         (a, b) => dist2d(a.x, a.z, fut.x, fut.z) - dist2d(b.x, b.z, fut.x, fut.z),
       )
@@ -40,7 +40,7 @@ export function updateMatchAI(m: Match, dt: number) {
 
     for (const p of sq.players) {
       if (p === m.controlled) continue
-      if (p.isGK) continue // el portero ya fue actualizado
+      if (p.isGK || p.sentOff) continue // el portero ya fue actualizado; expulsados no juegan
       p.speedMult = speedMult
       p.aiTimer -= dt
 
@@ -151,7 +151,7 @@ function nearestOpponent(m: Match, team: TeamIndex, x: number, z: number, maxD: 
   let best: PlayerEntity | null = null
   let bestD = maxD
   for (const o of opp) {
-    if (o.isGK) continue
+    if (o.isGK || o.sentOff) continue
     const d = dist2d(o.x, o.z, x, z)
     if (d < bestD) {
       bestD = d

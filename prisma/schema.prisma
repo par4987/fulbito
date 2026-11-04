@@ -45,6 +45,12 @@ model MatchResult {
   shotsAway           Int
   shotsOnTargetHome   Int
   shotsOnTargetAway   Int
+  foulsHome           Int      @default(0)
+  foulsAway           Int      @default(0)
+  yellowsHome         Int      @default(0)
+  yellowsAway         Int      @default(0)
+  redsHome            Int      @default(0)
+  redsAway            Int      @default(0)
   events              String
   createdAt           DateTime @default(now())
 }

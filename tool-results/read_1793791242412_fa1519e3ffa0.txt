@@ -1,0 +1,923 @@
+     1→     1→import { AudioManager } from './audio'
+     2→     2→import { Ball } from './ball'
+     3→     3→import {
+     4→     4→  BALL,
+     5→     5→  DIFFICULTY,
+     6→     6→  FORMATION_433,
+     7→     7→  GOAL,
+     8→     8→  MATCH_RULES,
+     9→     9→  PITCH,
+    10→    10→  PLAYER,
+    11→    11→  clamp,
+    12→    12→  dist2d,
+    13→    13→} from './constants'
+    14→    14→import type { InputManager } from './input'
+    15→    15→import { PlayerEntity, type KitMaterials } from './player'
+    16→    16→import { getRoster } from './teams'
+    17→    17→import type {
+    18→    18→  CameraMode,
+    19→    19→  Difficulty,
+    20→    20→  FullTimeResult,
+    21→    21→  HudState,
+    22→    22→  MatchConfig,
+    23→    23→  MatchEvent,
+    24→    24→  MatchSettings,
+    25→    25→  PlayerData,
+    26→    26→  SubResult,
+    27→    27→  SubState,
+    28→    28→  TeamIndex,
+    29→    29→  TeamRoster,
+    30→    30→} from './types'
+    31→    31→import { updateMatchAI } from './ai'
+    32→    32→
+    33→    33→interface Squad {
+    34→    34→  roster: TeamRoster
+    35→    35→  players: PlayerEntity[]
+    36→    36→  /** suplentes (banco) y marca de los ya utilizados */
+    37→    37→  bench: PlayerData[]
+    38→    38→  benchUsed: boolean[]
+    39→    39→  subsUsed: number
+    40→    40→  attackDir: 1 | -1
+    41→    41→  score: number
+    42→    42→  possession: number
+    43→    43→  shots: number
+    44→    44→  onTarget: number
+    45→    45→}
+    46→    46→
+    47→    47→export interface RestartInfo {
+    48→    48→  type: 'throwin' | 'corner' | 'goalkick'
+    49→    49→  team: TeamIndex
+    50→    50→  x: number
+    51→    51→  z: number
+    52→    52→}
+    53→    53→
+    54→    54→export class Match {
+    55→    55→  config: MatchConfig
+    56→    56→  settings: MatchSettings
+    57→    57→  difficulty: Difficulty
+    58→    58→  diff: (typeof DIFFICULTY)[Difficulty] = DIFFICULTY.profesional
+    59→    59→  squads: [Squad, Squad]
+    60→    60→  ball = new Ball()
+    61→    61→  phase: HudState['phase'] = 'kickoff'
+    62→    62→  phaseTimer = 0
+    63→    63→  clock = 0
+    64→    64→  durationSec: number
+    65→    65→  half: 1 | 2 = 1
+    66→    66→  owner: PlayerEntity | null = null
+    67→    67→  ownerHold = 0
+    68→    68→  gkHold = 0
+    69→    69→  lastTouchPlayer: PlayerEntity | null = null
+    70→    70→  controlled: PlayerEntity | null = null
+    71→    71→  switchHysteresis = 0
+    72→    72→  charge = 0
+    73→    73→  charging = false
+    74→    74→  restart: RestartInfo | null = null
+    75→    75→  events: MatchEvent[] = []
+    76→    76→  audio: AudioManager
+    77→    77→  input: InputManager
+    78→    78→  kitMats: [KitMaterials, KitMaterials]
+    79→    79→  /** excitación 0..1 para multitud/cámara */
+    80→    80→  excitement = 0
+    81→    81→  private shotWindow = 0
+    82→    82→  private shotTeam: TeamIndex | null = null
+    83→    83→  private pendingShot = false
+    84→    84→  private lastOutWasNearMiss = false
+    85→    85→  aiPassHint: PlayerEntity | null = null
+    86→    86→  private ballPrevX = 0
+    87→    87→  private celebrateScorer: string | null = null
+    88→    88→  private celebrateTeam: TeamIndex | null = null
+    89→    89→  private kickoffTeam: TeamIndex = 0
+    90→    90→  private finished = false
+    91→    91→
+    92→    92→  constructor(
+    93→    93→    config: MatchConfig,
+    94→    94→    input: InputManager,
+    95→    95→    audio: AudioManager,
+    96→    96→    kitMats: [KitMaterials, KitMaterials],
+    97→    97→  ) {
+    98→    98→    this.config = config
+    99→    99→    this.settings = config.settings
+   100→   100→    this.difficulty = config.settings.difficulty
+   101→   101→    this.diff = DIFFICULTY[this.difficulty]
+   102→   102→    this.durationSec = Math.max(30, config.settings.durationMin * 60)
+   103→   103→    this.input = input
+   104→   104→    this.audio = audio
+   105→   105→    this.kitMats = kitMats
+   106→   106→
+   107→   107→    const home = getRoster(config.homeTeamId)
+   108→   108→    const away = getRoster(config.awayTeamId)
+   109→   109→    this.squads = [this.buildSquad(home, 0, 1), this.buildSquad(away, 1, -1)]
+   110→   110→    this.setupKickoff(0)
+   111→   111→  }
+   112→   112→
+   113→   113→  private buildSquad(roster: TeamRoster, team: TeamIndex, attackDir: 1 | -1): Squad {
+   114→   114→    const players = roster.players.map(
+   115→   115→      (data: PlayerData, i) =>
+   116→   116→        new PlayerEntity(data, team, FORMATION_433[i].ax, FORMATION_433[i].az, this.kitMats[team]),
+   117→   117→    )
+   118→   118→    // el drenaje se escala con la duración real del partido para que el cansancio
+   119→   119→    // importe tanto en un partido de 3 como de 8 minutos
+   120→   120→    const drain = clamp(PLAYER.staminaDrainRef / this.durationSec, 0.25, 0.95)
+   121→   121→    for (const p of players) p.staminaDrainRate = drain
+   122→   122→    return {
+   123→   123→      roster,
+   124→   124→      players,
+   125→   125→      bench: roster.bench,
+   126→   126→      benchUsed: roster.bench.map(() => false),
+   127→   127→      subsUsed: 0,
+   128→   128→      attackDir,
+   129→   129→      score: 0,
+   130→   130→      possession: 0,
+   131→   131→      shots: 0,
+   132→   132→      onTarget: 0,
+   133→   133→    }
+   134→   134→  }
+   135→   135→
+   136→   136→  get teams() {
+   137→   137→    return this.squads
+   138→   138→  }
+   139→   139→
+   140→   140→  squad(team: TeamIndex): Squad {
+   141→   141→    return this.squads[team]
+   142→   142→  }
+   143→   143→
+   144→   144→  /** Arco que ATACA el equipo (x del arco rival). */
+   145→   145→  goalOf(team: TeamIndex): number {
+   146→   146→    return this.squads[team].attackDir > 0 ? PITCH.L : 0
+   147→   147→  }
+   148→   148→
+   149→   149→  /** Arco que DEFIENDE el equipo. */
+   150→   150→  ownGoalOf(team: TeamIndex): number {
+   151→   151→    return this.squads[team].attackDir > 0 ? 0 : PITCH.L
+   152→   152→  }
+   153→   153→
+   154→   154→  minute(): number {
+   155→   155→    return Math.min(90, Math.floor((this.clock / this.durationSec) * MATCH_RULES.realMinutesPerMatch))
+   156→   156→  }
+   157→   157→
+   158→   158→  addEvent(text: string, kind: MatchEvent['kind'] = 'info') {
+   159→   159→    this.events.push({ minute: this.minute(), text, kind })
+   160→   160→    if (this.events.length > 40) this.events.shift()
+   161→   161→  }
+   162→   162→
+   163→   163→  // ---------------------------------------------------------------- fases
+   164→   164→
+   165→   165→  setupKickoff(kickingTeam: TeamIndex) {
+   166→   166→    this.phase = 'kickoff'
+   167→   167→    this.phaseTimer = MATCH_RULES.kickoffFreeze
+   168→   168→    this.kickoffTeam = kickingTeam
+   169→   169→    this.owner = null
+   170→   170→    this.ball.reset()
+   171→   171→    for (const sq of this.squads) this.placeFormation(sq, kickingTeam)
+   172→   172→    const taker = this.squads[kickingTeam].players[9] // FW central
+   173→   173→    taker.teleport(PITCH.L / 2 - this.squads[kickingTeam].attackDir * 0.8, PITCH.W / 2)
+   174→   174→    this.gainControl(taker)
+   175→   175→    this.controlled = kickingTeam === 0 ? taker : null
+   176→   176→    this.audio.whistle(1)
+   177→   177→  }
+   178→   178→
+   179→   179→  private placeFormation(sq: Squad, kickingTeam: TeamIndex) {
+   180→   180→    for (const p of sq.players) {
+   181→   181→      let wx = sq.attackDir > 0 ? p.ax * PITCH.L : (1 - p.ax) * PITCH.L
+   182→   182→      let wz = p.az * PITCH.W
+   183→   183→      // todos en su propia mitad en el saque
+   184→   184→      if (sq.attackDir > 0) wx = Math.min(wx, PITCH.L / 2 - 0.5)
+   185→   185→      else wx = Math.max(wx, PITCH.L / 2 + 0.5)
+   186→   186→      // rivales fuera del círculo central
+   187→   187→      if (sq.attackDir !== this.squads[kickingTeam].attackDir) {
+   188→   188→        const d = dist2d(wx, wz, PITCH.L / 2, PITCH.W / 2)
+   189→   189→        if (d < PITCH.circleR + 1) {
+   190→   190→          const ux = (wx - PITCH.L / 2) / (d || 1)
+   191→   191→          const uz = (wz - PITCH.W / 2) / (d || 1)
+   192→   192→          wx = PITCH.L / 2 + ux * (PITCH.circleR + 1.5)
+   193→   193→          wz = PITCH.W / 2 + uz * (PITCH.circleR + 1.5)
+   194→   194→        }
+   195→   195→      }
+   196→   196→      p.teleport(clamp(wx, 1, PITCH.L - 1), clamp(wz, 1, PITCH.W - 1))
+   197→   197→      p.targetX = p.x
+   198→   198→      p.targetZ = p.z
+   199→   199→    }
+   200→   200→  }
+   201→   201→
+   202→   202→  private setRestart(info: RestartInfo) {
+   203→   203→    this.phase = 'restart'
+   204→   204→    this.phaseTimer = MATCH_RULES.restartFreeze
+   205→   205→    this.restart = info
+   206→   206→    this.ball.reset(info.x, info.z)
+   207→   207→    this.owner = null
+   208→   208→    const squad = this.squads[info.team]
+   209→   209→    let best: PlayerEntity | null = null
+   210→   210→    let bestD = Infinity
+   211→   211→    for (const p of squad.players) {
+   212→   212→      if (info.type === 'goalkick' ? !p.isGK : p.isGK) continue
+   213→   213→      const d = dist2d(p.x, p.z, info.x, info.z)
+   214→   214→      if (d < bestD) {
+   215→   215→        bestD = d
+   216→   216→        best = p
+   217→   217→      }
+   218→   218→    }
+   219→   219→    if (best) {
+   220→   220→      best.teleport(info.x - Math.sign(info.x - PITCH.L / 2) * 0.9, info.z)
+   221→   221→      this.gainControl(best)
+   222→   222→      if (info.team === 0) this.controlled = best
+   223→   223→      else this.controlled = null
+   224→   224→    }
+   225→   225→  }
+   226→   226→
+   227→   227→  private handleGoal(scoringTeam: TeamIndex) {
+   228→   228→    const sq = this.squads[scoringTeam]
+   229→   229→    sq.score++
+   230→   230→    if (this.pendingShot && this.shotTeam === scoringTeam) {
+   231→   231→      sq.onTarget++
+   232→   232→    }
+   233→   233→    const scorer = this.lastTouchPlayer
+   234→   234→    const own = scorer && scorer.team !== scoringTeam
+   235→   235→    const name = scorer ? scorer.data.name : 'desconocido'
+   236→   236→    this.celebrateScorer = own ? `${name} (autogol)` : name
+   237→   237→    this.celebrateTeam = scoringTeam
+   238→   238→    this.phase = 'goal'
+   239→   239→    this.phaseTimer = MATCH_RULES.goalCelebration
+   240→   240→    this.owner = null
+   241→   241→    this.pendingShot = false
+   242→   242→    this.audio.goalRoar()
+   243→   243→    this.excitement = 1
+   244→   244→    this.addEvent(`¡GOL de ${this.celebrateScorer} (${sq.roster.def.short})!`, 'goal')
+   245→   245→  }
+   246→   246→
+   247→   247→  finishHalf() {
+   248→   248→    this.phase = 'half'
+   249→   249→    this.phaseTimer = MATCH_RULES.halfTimePause
+   250→   250→    this.audio.whistle(2)
+   251→   251→    this.addEvent('Final del primer tiempo', 'info')
+   252→   252→  }
+   253→   253→
+   254→   254→  private goFullTime() {
+   255→   255→    this.phase = 'full'
+   256→   256→    this.finished = true
+   257→   257→    this.audio.whistle(3, true)
+   258→   258→    this.addEvent('Final del partido', 'info')
+   259→   259→  }
+   260→   260→
+   261→   261→  get result(): FullTimeResult {
+   262→   262→    const [h, a] = this.squads
+   263→   263→    const tot = Math.max(0.001, h.possession + a.possession)
+   264→   264→    return {
+   265→   265→      home: h.roster.def,
+   266→   266→      away: a.roster.def,
+   267→   267→      score: [h.score, a.score],
+   268→   268→      possession: [Math.round((h.possession / tot) * 100), Math.round((a.possession / tot) * 100)],
+   269→   269→      shots: [h.shots, a.shots],
+   270→   270→      onTarget: [h.onTarget, a.onTarget],
+   271→   271→      events: [...this.events],
+   272→   272→      difficulty: this.difficulty,
+   273→   273→      durationSec: this.durationSec,
+   274→   274→    }
+   275→   275→  }
+   276→   276→
+   277→   277→  get goalInfo() {
+   278→   278→    return this.celebrateScorer && this.celebrateTeam !== null
+   279→   279→      ? { team: this.celebrateTeam, scorer: this.celebrateScorer }
+   280→   280→      : null
+   281→   281→  }
+   282→   282→
+   283→   283→  // ---------------------------------------------------------------- control del balón
+   284→   284→
+   285→   285→  gainControl(p: PlayerEntity) {
+   286→   286→    this.owner = p
+   287→   287→    p.hasBall = true
+   288→   288→    this.ownerHold = 0
+   289→   289→    this.aiPassHint = null
+   290→   290→    this.gkHold = p.isGK ? (p.team === 0 ? 2.5 : MATCH_RULES.gkHoldTime) : 0
+   291→   291→    this.ball.lastTouch = p.team
+   292→   292→    this.lastTouchPlayer = p
+   293→   293→    if (p.team === 0) this.controlled = p
+   294→   294→  }
+   295→   295→
+   296→   296→  loseControl() {
+   297→   297→    if (this.owner) this.owner.hasBall = false
+   298→   298→    this.owner = null
+   299→   299→  }
+   300→   300→
+   301→   301→  private kickBall(p: PlayerEntity, dx: number, dz: number, speed: number, vz: number) {
+   302→   302→    this.ball.kick(dx, dz, speed, vz)
+   303→   303→    this.loseControl()
+   304→   304→    p.kickCooldown = PLAYER.kickCooldown
+   305→   305→    p.kickAnim = 0.32
+   306→   306→    this.ball.lastTouch = p.team
+   307→   307→    this.lastTouchPlayer = p
+   308→   308→    this.aiPassHint = null
+   309→   309→    this.audio.kick(clamp(speed / 28, 0.2, 1))
+   310→   310→  }
+   311→   311→
+   312→   312→  /** Pase raso o alto hacia el mejor compañero según dirección deseada. */
+   313→   313→  doPass(p: PlayerEntity, aimX: number, aimZ: number, lofted = false) {
+   314→   314→    if (p.kickCooldown > 0) return
+   315→   315→    const receiver = this.pickPassTarget(p, aimX, aimZ, lofted)
+   316→   316→    if (!receiver) {
+   317→   317→      // despeje hacia adelante
+   318→   318→      const dir = this.squads[p.team].attackDir
+   319→   319→      this.kickBall(p, dir, (Math.random() - 0.5) * 20, 16, 4)
+   320→   320→      return
+   321→   321→    }
+   322→   322→    const err = (1 - p.data.skill) * this.diff.passErr * (lofted ? 1.6 : 1)
+   323→   323→    const noise = (Math.random() - 0.5) * 2 * err
+   324→   324→    const cs = Math.cos(noise)
+   325→   325→    const sn = Math.sin(noise)
+   326→   326→    const dist = dist2d(p.x, p.z, receiver.x, receiver.z)
+   327→   327→    const speed = lofted ? clamp(10 + dist * 0.42, 13, 20) : clamp(9 + dist * 0.55, 10, 21)
+   328→   328→    // punto adelantado hacia donde corre el receptor
+   329→   329→    const lead = lofted ? 0.35 : 0.45
+   330→   330→    let dx = receiver.x + receiver.vx * lead - p.x
+   331→   331→    let dz = receiver.z + receiver.vz * lead - p.z
+   332→   332→    const rx = dx * cs - dz * sn
+   333→   333→    const rz = dx * sn + dz * cs
+   334→   334→    const vz = lofted ? clamp(dist * 0.32, 3, 8.5) : 0.35
+   335→   335→    this.kickBall(p, rx, rz, speed, vz)
+   336→   336→    if (p.team === 0 && !lofted) this.controlled = receiver
+   337→   337→    if (p.team === 1) this.aiPassHint = receiver
+   338→   338→  }
+   339→   339→
+   340→   340→  private pickPassTarget(p: PlayerEntity, aimX: number, aimZ: number, lofted: boolean): PlayerEntity | null {
+   341→   341→    const aimLen = Math.hypot(aimX, aimZ)
+   342→   342→    const nx = aimLen > 0.1 ? aimX / aimLen : Math.sin(p.dir)
+   343→   343→    const nz = aimLen > 0.1 ? aimZ / aimLen : Math.cos(p.dir)
+   344→   344→    const squad = this.squads[p.team]
+   345→   345→    let best: PlayerEntity | null = null
+   346→   346→    let bestScore = -Infinity
+   347→   347→    for (const mate of squad.players) {
+   348→   348→      if (mate === p || mate.isGK) continue
+   349→   349→      const dx = mate.x - p.x
+   350→   350→      const dz = mate.z - p.z
+   351→   351→      const d = Math.hypot(dx, dz)
+   352→   352→      if (d < 2.5 || d > (lofted ? 55 : 34)) continue
+   353→   353→      const dot = (dx / d) * nx + (dz / d) * nz
+   354→   354→      if (!lofted && dot < 0.2) continue
+   355→   355→      const open = this.closestOppDist(mate)
+   356→   356→      let lanePen = 0
+   357→   357→      if (!lofted) lanePen = this.laneBlocked(p, mate) ? 2.5 : 0
+   358→   358→      const score = dot * 3 + open * 0.35 - d * 0.045 - lanePen
+   359→   359→      if (score > bestScore) {
+   360→   360→        bestScore = score
+   361→   361→        best = mate
+   362→   362→      }
+   363→   363→    }
+   364→   364→    return best
+   365→   365→  }
+   366→   366→
+   367→   367→  private closestOppDist(p: PlayerEntity): number {
+   368→   368→    const opp = this.squads[p.team === 0 ? 1 : 0].players
+   369→   369→    let d = Infinity
+   370→   370→    for (const o of opp) d = Math.min(d, dist2d(o.x, o.z, p.x, p.z))
+   371→   371→    return d
+   372→   372→  }
+   373→   373→
+   374→   374→  private laneBlocked(from: PlayerEntity, to: PlayerEntity): boolean {
+   375→   375→    const opp = this.squads[from.team === 0 ? 1 : 0].players
+   376→   376→    const dx = to.x - from.x
+   377→   377→    const dz = to.z - from.z
+   378→   378→    const len = Math.hypot(dx, dz) || 1
+   379→   379→    for (const o of opp) {
+   380→   380→      const t = clamp(((o.x - from.x) * dx + (o.z - from.z) * dz) / (len * len), 0.1, 0.9)
+   381→   381→      const px = from.x + dx * t
+   382→   382→      const pz = from.z + dz * t
+   383→   383→      if (dist2d(o.x, o.z, px, pz) < 1.3) return true
+   384→   384→    }
+   385→   385→    return false
+   386→   386→  }
+   387→   387→
+   388→   388→  /** Disparo al arco. power 0..1, aim = componente perpendicular del input. */
+   389→   389→  doShoot(p: PlayerEntity, power: number, aim: number) {
+   390→   390→    if (p.kickCooldown > 0) return
+   391→   391→    const gx = this.goalOf(p.team)
+   392→   392→    const dirX = gx > p.x ? 1 : -1
+   393→   393→    const dist = Math.abs(gx - p.x)
+   394→   394→    const noise = (1 - p.data.skill) * this.diff.shootErr * (2 + dist * 0.06) + power * 0.04
+   395→   395→    const angle = (Math.random() - 0.5) * 2 * noise
+   396→   396→    let dz = GOAL.zCenter - p.z + aim * 3.4
+   397→   397→    let dx = dirX * Math.max(8, dist)
+   398→   398→    const cs = Math.cos(angle)
+   399→   399→    const sn = Math.sin(angle)
+   400→   400→    const rx = dx * cs - dz * sn
+   401→   401→    const rz = dx * sn + dz * cs
+   402→   402→    const speed = 18 + power * 12
+   403→   403→    const vz = 0.5 + power * 3.1
+   404→   404→    this.kickBall(p, rx, rz, speed, vz)
+   405→   405→    this.squads[p.team].shots++
+   406→   406→    this.pendingShot = true
+   407→   407→    this.shotTeam = p.team
+   408→   408→    this.shotWindow = 1.3
+   409→   409→  }
+   410→   410→
+   411→   411→  /** Entrada (presión): intenta robar el balón al dueño cercano. */
+   412→   412→  tryTackle(p: PlayerEntity) {
+   413→   413→    if (p.tackleCd > 0 || p.stunTimer > 0) return
+   414→   414→    p.tackleCd = PLAYER.tackleCooldown
+   415→   415→    const owner = this.owner
+   416→   416→    if (owner && owner.team !== p.team && dist2d(p.x, p.z, owner.x, owner.z) < PLAYER.tackleRange) {
+   417→   417→      const prob = 0.45 + p.data.skill * 0.25 + this.diff.tackle * 0.15 - owner.data.skill * 0.2
+   418→   418→      if (Math.random() < prob) {
+   419→   419→        this.loseControl()
+   420→   420→        this.ball.kick(p.vx + Math.sin(p.dir) * 4, p.vz + Math.cos(p.dir) * 4, 7, 0.4)
+   421→   421→        this.ball.lastTouch = p.team
+   422→   422→        this.lastTouchPlayer = p
+   423→   423→        owner.stunTimer = 0.3
+   424→   424→        this.audio.kick(0.3)
+   425→   425→      } else {
+   426→   426→        p.stunTimer = 0.35
+   427→   427→      }
+   428→   428→    } else if (!owner && dist2d(p.x, p.z, this.ball.x, this.ball.z) < PLAYER.tackleRange) {
+   429→   429→      // empujón al balón libre
+   430→   430→      this.ball.kick(Math.sin(p.dir), Math.cos(p.dir), 8, 0.5)
+   431→   431→      this.ball.lastTouch = p.team
+   432→   432→      this.lastTouchPlayer = p
+   433→   433→      p.kickCooldown = 0.3
+   434→   434→    }
+   435→   435→  }
+   436→   436→
+   437→   437→  slideTackle(p: PlayerEntity, dx: number, dz: number) {
+   438→   438→    p.startSlide(dx, dz)
+   439→   439→  }
+   440→   440→
+   441→   441→  // ---------------------------------------------------------------- cambios
+   442→   442→
+   443→   443→  /** Estado para la interfaz de cambios (titulares con resistencia + banco). */
+   444→   444→  getSubState(team: TeamIndex): SubState {
+   445→   445→    const sq = this.squads[team]
+   446→   446→    return {
+   447→   447→      used: sq.subsUsed,
+   448→   448→      max: MATCH_RULES.maxSubs,
+   449→   449→      onField: sq.players.map((p, i) => ({
+   450→   450→        idx: i,
+   451→   451→        num: p.data.num,
+   452→   452→        name: p.data.name,
+   453→   453→        role: p.data.role,
+   454→   454→        stamina: Math.round(p.stamina),
+   455→   455→        gk: p.isGK,
+   456→   456→      })),
+   457→   457→      bench: sq.bench.map((b, i) => ({
+   458→   458→        idx: i,
+   459→   459→        num: b.num,
+   460→   460→        name: b.name,
+   461→   461→        role: b.role,
+   462→   462→        available: !sq.benchUsed[i],
+   463→   463→      })),
+   464→   464→    }
+   465→   465→  }
+   466→   466→
+   467→   467→  /**
+   468→   468→   * Realiza un cambio: el titular conserva su puesto en la formación y el rig 3D;
+   469→   469→   * solo se rebrandea (nombre, dorsal, atributos) y recupera resistencia.
+   470→   470→   * Portero solo por portero (el rig del ARQ es distinto y su IA es especial).
+   471→   471→   */
+   472→   472→  makeSubstitution(team: TeamIndex, outIdx: number, benchIdx: number): SubResult {
+   473→   473→    if (this.phase === 'full') return 'invalido'
+   474→   474→    const sq = this.squads[team]
+   475→   475→    if (sq.subsUsed >= MATCH_RULES.maxSubs) return 'limite'
+   476→   476→    const out = sq.players[outIdx]
+   477→   477→    const sub = sq.bench[benchIdx]
+   478→   478→    if (!out || !sub || sq.benchUsed[benchIdx]) return 'invalido'
+   479→   479→    if (out.isGK !== (sub.role === 'GK')) return 'invalido'
+   480→   480→    const oldName = out.data.name
+   481→   481→    out.data = sub
+   482→   482→    out.stamina = 100
+   483→   483→    sq.benchUsed[benchIdx] = true
+   484→   484→    sq.subsUsed++
+   485→   485→    this.addEvent(`Cambio ${sq.roster.def.short}: entra ${sub.name} por ${oldName}`, 'info')
+   486→   486→    return 'ok'
+   487→   487→  }
+   488→   488→
+   489→   489→  private cpuSubTimer = 10
+   490→   490→
+   491→   491→  /** La CPU reemplaza a su jugador de campo más cansado a partir del minuto 55. */
+   492→   492→  private tryCpuSub() {
+   493→   493→    const sq = this.squads[1]
+   494→   494→    if (sq.subsUsed >= MATCH_RULES.maxSubs) return
+   495→   495→    if (this.minute() < 55) return
+   496→   496→    let worst: PlayerEntity | null = null
+   497→   497→    let worstIdx = -1
+   498→   498→    for (let i = 0; i < sq.players.length; i++) {
+   499→   499→      const p = sq.players[i]
+   500→   500→      if (p.isGK) continue
+   501→   501→      if (!worst || p.stamina < worst.stamina) {
+   502→   502→        worst = p
+   503→   503→        worstIdx = i
+   504→   504→      }
+   505→   505→    }
+   506→   506→    if (!worst || worst.stamina > 55) return
+   507→   507→    let bi = sq.bench.findIndex((b, i) => !sq.benchUsed[i] && b.role === worst!.data.role)
+   508→   508→    if (bi < 0) bi = sq.bench.findIndex((b, i) => !sq.benchUsed[i] && b.role !== 'GK')
+   509→   509→    if (bi >= 0) this.makeSubstitution(1, worstIdx, bi)
+   510→   510→  }
+   511→   511→
+   512→   512→  // ---------------------------------------------------------------- update
+   513→   513→
+   514→   514→  update(dt: number) {
+   515→   515→    this.excitement = Math.max(0, this.excitement - dt * 0.35)
+   516→   516→    this.audio.setExcitement(this.excitement * 0.8)
+   517→   517→    this.shotWindow = Math.max(0, this.shotWindow - dt)
+   518→   518→    if (this.shotWindow === 0) this.pendingShot = false
+   519→   519→
+   520→   520→    // cambios automáticos de la CPU cuando el cansancio aprieta
+   521→   521→    // (se revisan en toda fase: las bolas paradas son momento de cambios)
+   522→   522→    if (this.phase !== 'full') {
+   523→   523→      this.cpuSubTimer -= dt
+   524→   524→      if (this.cpuSubTimer <= 0) {
+   525→   525→        this.cpuSubTimer = 8
+   526→   526→        this.tryCpuSub()
+   527→   527→      }
+   528→   528→    }
+   529→   529→
+   530→   530→    switch (this.phase) {
+   531→   531→      case 'kickoff':
+   532→   532→      case 'restart':
+   533→   533→      case 'half': {
+   534→   534→        this.phaseTimer -= dt
+   535→   535→        if (this.phase === 'half') {
+   536→   536→          if (this.phaseTimer <= 0) {
+   537→   537→            this.half = 2
+   538→   538→            for (const sq of this.squads) sq.attackDir = (sq.attackDir * -1) as 1 | -1
+   539→   539→            // descanso: los jugadores recuperan resistencia en el mediempo
+   540→   540→            for (const sq of this.squads)
+   541→   541→              for (const p of sq.players) p.stamina = Math.min(100, p.stamina + MATCH_RULES.halfTimeRecovery)
+   542→   542→            this.setupKickoff(1)
+   543→   543→            this.addEvent('Comienza el segundo tiempo', 'info')
+   544→   544→          }
+   545→   545→          break
+   546→   546→        }
+   547→   547→        // congelados: solo animación
+   548→   548→        for (const sq of this.squads) for (const p of sq.players) { p.desiredVx = 0; p.desiredVz = 0; p.update(dt) }
+   549→   549→        this.ballPrevX = this.ball.x
+   550→   550→        if (this.phaseTimer <= 0) {
+   551→   551→          this.phase = 'play'
+   552→   552→        }
+   553→   553→        break
+   554→   554→      }
+   555→   555→      case 'goal': {
+   556→   556→        this.phaseTimer -= dt
+   557→   557→        for (const sq of this.squads) for (const p of sq.players) { p.desiredVx = 0; p.desiredVz = 0; p.update(dt) }
+   558→   558→        if (this.phaseTimer <= 0) {
+   559→   559→          this.celebrateScorer = null
+   560→   560→          this.celebrateTeam = null
+   561→   561→          this.setupKickoff(this.lastTouchTeamConceding())
+   562→   562→        }
+   563→   563→        break
+   564→   564→      }
+   565→   565→      case 'play':
+   566→   566→        this.updatePlay(dt)
+   567→   567→        break
+   568→   568→      case 'full':
+   569→   569→        for (const sq of this.squads) for (const p of sq.players) { p.desiredVx = 0; p.desiredVz = 0; p.update(dt) }
+   570→   570→        break
+   571→   571→    }
+   572→   572→    this.input.endFrame()
+   573→   573→  }
+   574→   574→
+   575→   575→  private lastTouchTeamConceding(): TeamIndex {
+   576→   576→    if (!this.lastTouchPlayer) return this.kickoffTeam === 0 ? 1 : 0
+   577→   577→    // el equipo que recibió el gol saca
+   578→   578→    return this.lastTouchPlayer.team === 0 ? 1 : 0
+   579→   579→  }
+   580→   580→
+   581→   581→  private updatePlay(dt: number) {
+   582→   582→    this.clock += dt
+   583→   583→    this.ballPrevX = this.ball.x
+   584→   584→
+   585→   585→    this.updateControlledInput(dt)
+   586→   586→    updateMatchAI(this, dt)
+   587→   587→    for (const sq of this.squads) {
+   588→   588→      for (const p of sq.players) p.update(dt)
+   589→   589→    }
+   590→   590→    this.separatePlayers()
+   591→   591→    this.updateBallPossession(dt)
+   592→   592→    this.checkOutOfBounds()
+   593→   593→
+   594→   594→    if (this.owner) this.squads[this.owner.team].possession += dt
+   595→   595→
+   596→   596→    if (this.half === 1 && this.clock >= this.durationSec / 2) {
+   597→   597→      this.finishHalf()
+   598→   598→    } else if (this.half === 2 && this.clock >= this.durationSec && !this.finished) {
+   599→   599→      this.goFullTime()
+   600→   600→    }
+   601→   601→  }
+   602→   602→
+   603→   603→  /** Convierte la entrada humana en acciones del jugador controlado. */
+   604→   604→  private updateControlledInput(dt: number) {
+   605→   605→    const inp = this.input
+   606→   606→    // auto-cambio de jugador
+   607→   607→    const team0 = this.squads[0]
+   608→   608→    if (!this.owner || this.owner.team !== 0) {
+   609→   609→      this.switchHysteresis += dt
+   610→   610→      if (this.switchHysteresis > 0.18 || !this.controlled || this.controlled.team !== 0) {
+   611→   611→        const fut = this.ball.future(0.25)
+   612→   612→        let best: PlayerEntity | null = null
+   613→   613→        let bestD = Infinity
+   614→   614→        const nearOwnBox = Math.abs(this.ball.x - this.ownGoalOf(0)) < 20
+   615→   615→        for (const p of team0.players) {
+   616→   616→          if (p.isGK && !nearOwnBox) continue
+   617→   617→          const d = dist2d(p.x, p.z, fut.x, fut.z)
+   618→   618→          if (d < bestD) {
+   619→   619→            bestD = d
+   620→   620→            best = p
+   621→   621→          }
+   622→   622→        }
+   623→   623→        if (best && best !== this.controlled) this.controlled = best
+   624→   624→        this.switchHysteresis = 0
+   625→   625→      }
+   626→   626→    } else {
+   627→   627→      this.switchHysteresis = 0
+   628→   628→      this.controlled = this.owner
+   629→   629→    }
+   630→   630→
+   631→   631→    const c = this.controlled
+   632→   632→    if (!c) return
+   633→   633→    c.speedMult = this.diff.userBoost
+   634→   634→
+   635→   635→    // movimiento relativo a cámara (el engine lo traduce antes: aquí ya es mundo)
+   636→   636→    const mx = inp.move.x
+   637→   637→    const my = inp.move.y
+   638→   638→    const world = this.engineMoveToWorld(mx, my)
+   639→   639→    const moving = Math.hypot(world.x, world.z) > 0.1
+   640→   640→    c.sprinting = inp.sprint && moving
+   641→   641→    if (moving) {
+   642→   642→      const len = Math.hypot(world.x, world.z)
+   643→   643→      c.desiredVx = (world.x / len) * c.maxSpeed()
+   644→   644→      c.desiredVz = (world.z / len) * c.maxSpeed()
+   645→   645→    } else {
+   646→   646→      c.desiredVx = 0
+   647→   647→      c.desiredVz = 0
+   648→   648→    }
+   649→   649→
+   650→   650→    const isOwner = this.owner === c
+   651→   651→    if (isOwner) {
+   652→   652→      // disparo con carga
+   653→   653→      if (inp.isHeld('shoot')) {
+   654→   654→        this.charging = true
+   655→   655→        this.charge = Math.min(1, this.charge + dt / 0.85)
+   656→   656→        if (this.charge >= 1) {
+   657→   657→          this.releaseShot(c)
+   658→   658→        }
+   659→   659→      } else if (this.charging) {
+   660→   660→        this.releaseShot(c)
+   661→   661→      }
+   662→   662→      if (inp.consumePressed('pass')) {
+   663→   663→        const aim = moving ? world : { x: Math.sin(c.dir), z: Math.cos(c.dir) }
+   664→   664→        this.doPass(c, aim.x, aim.z, false)
+   665→   665→        this.charge = 0
+   666→   666→        this.charging = false
+   667→   667→      }
+   668→   668→      if (inp.consumePressed('lob')) {
+   669→   669→        const aim = moving ? world : { x: Math.sin(c.dir), z: Math.cos(c.dir) }
+   670→   670→        this.doPass(c, aim.x, aim.z, true)
+   671→   671→      }
+   672→   672→    } else {
+   673→   673→      // defensa
+   674→   674→      this.charge = 0
+   675→   675→      this.charging = false
+   676→   676→      if (inp.consumePressed('pass')) this.tryTackle(c)
+   677→   677→      if (inp.consumePressed('shoot')) {
+   678→   678→        const dx = moving ? world.x : Math.sin(c.dir)
+   679→   679→        const dz = moving ? world.z : Math.cos(c.dir)
+   680→   680→        this.slideTackle(c, dx, dz)
+   681→   681→      }
+   682→   682→      if (inp.consumePressed('lob') || inp.consumePressed('switch')) {
+   683→   683→        // cambio manual: siguiente más cercano
+   684→   684→        const fut = this.ball.future(0.25)
+   685→   685→        const others = team0.players
+   686→   686→          .filter((p) => !p.isGK && p !== c)
+   687→   687→          .sort((a, b) => dist2d(a.x, a.z, fut.x, fut.z) - dist2d(b.x, b.z, fut.x, fut.z))
+   688→   688→        if (others[0]) this.controlled = others[0]
+   689→   689→      }
+   690→   690→    }
+   691→   691→  }
+   692→   692→
+   693→   693→  private releaseShot(c: PlayerEntity) {
+   694→   694→    const world = this.engineMoveToWorld(this.input.move.x, this.input.move.y)
+   695→   695→    // input vertical en mundo: arriba = palo lejano, abajo = palo cercano
+   696→   696→    const aimProj = clamp(world.z, -1, 1)
+   697→   697→    this.doShoot(c, Math.max(0.25, this.charge), aimProj)
+   698→   698→    this.charge = 0
+   699→   699→    this.charging = false
+   700→   700→  }
+   701→   701→
+   702→   702→  /** Traduce input de pantalla a mundo según el modo de cámara (seteado por el engine). */
+   703→   703→  cameraMode: CameraMode = 'broadcast'
+   704→   704→  attackDirUser: 1 | -1 = 1
+   705→   705→  private engineMoveToWorld(x: number, y: number): { x: number; z: number } {
+   706→   706→    if (this.cameraMode === 'arco') {
+   707→   707→      // cámara tras el arco que ataca el usuario
+   708→   708→      const f = this.attackDirUser
+   709→   709→      return { x: y * f, z: -x * f }
+   710→   710→    }
+   711→   711→    return { x, z: -y }
+   712→   712→  }
+   713→   713→
+   714→   714→  // ---------------------------------------------------------------- balón y posesión
+   715→   715→
+   716→   716→  private separatePlayers() {
+   717→   717→    const all = [...this.squads[0].players, ...this.squads[1].players]
+   718→   718→    for (let i = 0; i < all.length; i++) {
+   719→   719→      for (let j = i + 1; j < all.length; j++) {
+   720→   720→        const a = all[i]
+   721→   721→        const b = all[j]
+   722→   722→        const dx = b.x - a.x
+   723→   723→        const dz = b.z - a.z
+   724→   724→        const d = Math.hypot(dx, dz)
+   725→   725→        const min = PLAYER.radius * 2
+   726→   726→        if (d > 0.001 && d < min) {
+   727→   727→          const push = (min - d) / 2
+   728→   728→          const ux = dx / d
+   729→   729→          const uz = dz / d
+   730→   730→          a.x -= ux * push
+   731→   731→          a.z -= uz * push
+   732→   732→          b.x += ux * push
+   733→   733→          b.z += uz * push
+   734→   734→        }
+   735→   735→      }
+   736→   736→    }
+   737→   737→  }
+   738→   738→
+   739→   739→  private updateBallPossession(dt: number) {
+   740→   740→    const ball = this.ball
+   741→   741→    const postHit = ball.update(dt)
+   742→   742→    if (postHit === 'post') {
+   743→   743→      this.audio.post()
+   744→   744→      this.addEvent('¡Al palo!', 'chance')
+   745→   745→      this.excitement = Math.max(this.excitement, 0.6)
+   746→   746→    } else if (postHit === 'crossbar') {
+   747→   747→      this.audio.post()
+   748→   748→      this.addEvent('¡Al travesaño!', 'chance')
+   749→   749→      this.excitement = Math.max(this.excitement, 0.6)
+   750→   750→    }
+   751→   751→
+   752→   752→    const owner = this.owner
+   753→   753→    if (owner) {
+   754→   754→      if (owner.isGK && this.gkHold > 0) {
+   755→   755→        this.gkHold -= dt
+   756→   756→        // balón en las manos
+   757→   757→        ball.x = owner.x + Math.sin(owner.dir) * 0.35
+   758→   758→        ball.z = owner.z + Math.cos(owner.dir) * 0.35
+   759→   759→        ball.y = 1.05
+   760→   760→        ball.stop()
+   761→   761→        const gkTeam = owner.team
+   762→   762→        if (this.gkHold <= 0) {
+   763→   763→          // distribución automática del portero
+   764→   764→          const mate = this.pickGkDistribution(owner)
+   765→   765→          if (mate) {
+   766→   766→            const dist = dist2d(owner.x, owner.z, mate.x, mate.z)
+   767→   767→            const lofted = dist > 26
+   768→   768→            this.doPass(owner, mate.x - owner.x, mate.z - owner.z, lofted)
+   769→   769→            if (owner.team === 0) this.controlled = mate
+   770→   770→          } else {
+   771→   771→            this.kickBall(owner, this.squads[gkTeam].attackDir, 0, 16, 6)
+   772→   772→          }
+   773→   773→        }
+   774→   774→        return
+   775→   775→      }
+   776→   776→
+   777→   777→      // conducción: el balón "pega" al pie
+   778→   778→      this.ownerHold += dt
+   779→   779→      const ahead = owner.sprinting ? 0.95 : 0.55
+   780→   780→      const tx = owner.x + Math.sin(owner.dir) * ahead
+   781→   781→      const tz = owner.z + Math.cos(owner.dir) * ahead
+   782→   782→      ball.vx = (tx - ball.x) * 11
+   783→   783→      ball.vz = (tz - ball.z) * 11
+   784→   784→      ball.vy = 0
+   785→   785→      ball.y = BALL.r
+   786→   786→      if (dist2d(ball.x, ball.z, owner.x, owner.z) > 2.4) this.loseControl()
+   787→   787→      return
+   788→   788→    }
+   789→   789→
+   790→   790→    // balón libre: intento de control por proximidad
+   791→   791→    if (ball.y < PLAYER.controlHeight) {
+   792→   792→      const all = [...this.squads[0].players, ...this.squads[1].players]
+   793→   793→      let best: PlayerEntity | null = null
+   794→   794→      let bestD = Infinity
+   795→   795→      for (const p of all) {
+   796→   796→        if (p.kickCooldown > 0 || p.stunTimer > 0 || p.slideTimer > 0) continue
+   797→   797→        const d = dist2d(p.x, p.z, ball.x, ball.z)
+   798→   798→        if (d < PLAYER.reach && d < bestD) {
+   799→   799→          bestD = d
+   800→   800→          best = p
+   801→   801→        }
+   802→   802→      }
+   803→   803→      if (best) {
+   804→   804→        const sp = ball.speed
+   805→   805→        const controllable = sp < 9 || Math.random() < 0.35 + best.data.skill * 0.55
+   806→   806→        if (sp > 16 && best.isGK && this.isBallThreat(best)) {
+   807→   807→          // atajada
+   808→   808→          this.gainControl(best)
+   809→   809→          this.squads[best.team].onTarget += this.pendingShot && this.shotTeam !== best.team ? 1 : 0
+   810→   810→          if (this.pendingShot && this.shotTeam !== best.team) {
+   811→   811→            this.addEvent(`¡Atajada de ${best.data.name}!`, 'chance')
+   812→   812→            this.excitement = Math.max(this.excitement, 0.7)
+   813→   813→            this.audio.ooh()
+   814→   814→          }
+   815→   815→          this.pendingShot = false
+   816→   816→          this.audio.catchBall()
+   817→   817→          return
+   818→   818→        }
+   819→   819→        if (controllable) {
+   820→   820→          this.gainControl(best)
+   821→   821→          ball.vx *= 0.15
+   822→   822→          ball.vz *= 0.15
+   823→   823→          ball.vy = 0
+   824→   824→        } else {
+   825→   825→          // control malo: rebota
+   826→   826→          ball.vx = ball.vx * -0.25 + (Math.random() - 0.5) * 4
+   827→   827→          ball.vz = ball.vz * -0.25 + (Math.random() - 0.5) * 4
+   828→   828→          ball.lastTouch = best.team
+   829→   829→          this.lastTouchPlayer = best
+   830→   830→          best.kickCooldown = 0.25
+   831→   831→        }
+   832→   832→      }
+   833→   833→    }
+   834→   834→  }
+   835→   835→
+   836→   836→  private isBallThreat(gk: PlayerEntity): boolean {
+   837→   837→    // el balón va hacia su arco rápido
+   838→   838→    const gx = this.ownGoalOf(gk.team)
+   839→   839→    const toward = gx < PITCH.L / 2 ? this.ball.vx < -6 : this.ball.vx > 6
+   840→   840→    return toward && this.ball.speed > 12
+   841→   841→  }
+   842→   842→
+   843→   843→  private pickGkDistribution(gk: PlayerEntity): PlayerEntity | null {
+   844→   844→    const squad = this.squads[gk.team]
+   845→   845→    let best: PlayerEntity | null = null
+   846→   846→    let bestScore = -Infinity
+   847→   847→    for (const mate of squad.players) {
+   848→   848→      if (mate === gk) continue
+   849→   849→      const d = dist2d(gk.x, gk.z, mate.x, mate.z)
+   850→   850→      const open = Math.min(9, this.closestOppDist(mate))
+   851→   851→      const score = open * 2 - d * 0.06 + (mate.data.role === 'DF' ? 2 : 0)
+   852→   852→      if (score > bestScore) {
+   853→   853→        bestScore = score
+   854→   854→        best = mate
+   855→   855→      }
+   856→   856→    }
+   857→   857→    return best
+   858→   858→  }
+   859→   859→
+   860→   860→  // ---------------------------------------------------------------- reglas: fuera / gol
+   861→   861→
+   862→   862→  private checkOutOfBounds() {
+   863→   863→    const b = this.ball
+   864→   864→    const prevX = this.ballPrevX
+   865→   865→
+   866→   866→    // gol: cruza la línea de meta por debajo del travesaño y dentro de la boca
+   867→   867→    if (prevX > 0 && b.x <= 0 && Math.abs(b.z - GOAL.zCenter) < PITCH.goalW / 2 && b.y < PITCH.goalH) {
+   868→   868→      this.handleGoalByGoalLine(0)
+   869→   869→      return
+   870→   870→    }
+   871→   871→    if (prevX < PITCH.L && b.x >= PITCH.L && Math.abs(b.z - GOAL.zCenter) < PITCH.goalW / 2 && b.y < PITCH.goalH) {
+   872→   872→      this.handleGoalByGoalLine(PITCH.L)
+   873→   873→      return
+   874→   874→    }
+   875→   875→
+   876→   876→    // líneas de banda
+   877→   877→    if (b.z <= 0 || b.z >= PITCH.W) {
+   878→   878→      const team = b.lastTouch === 0 ? 1 : 0
+   879→   879→      this.lastOutWasNearMiss = false
+   880→   880→      if (this.pendingShot) {
+   881→   881→        this.audio.ooh()
+   882→   882→        this.excitement = Math.max(this.excitement, 0.5)
+   883→   883→        this.lastOutWasNearMiss = true
+   884→   884→      }
+   885→   885→      this.setRestart({ type: 'throwin', team, x: clamp(b.x, 1.5, PITCH.L - 1.5), z: b.z <= 0 ? 0.3 : PITCH.W - 0.3 })
+   886→   886→      this.addEvent(this.lastOutWasNearMiss ? '¡Uy! Salió muy cerca del arco' : 'Saque de banda', 'info')
+   887→   887→      this.pendingShot = false
+   888→   888→      return
+   889→   889→    }
+   890→   890→
+   891→   891→    // líneas de meta (sin gol)
+   892→   892→    if (b.x <= 0 || b.x >= PITCH.L) {
+   893→   893→      const leftSide = b.x <= 0
+   894→   894→      const defendingTeam: TeamIndex = this.ownGoalOf(0) === (leftSide ? 0 : PITCH.L) ? 0 : 1
+   895→   895→      const attackTeam: TeamIndex = defendingTeam === 0 ? 1 : 0
+   896→   896→      if (b.lastTouch === defendingTeam) {
+   897→   897→        // córner
+   898→   898→        const z = b.z <= PITCH.W / 2 ? 0.4 : PITCH.W - 0.4
+   899→   899→        this.setRestart({ type: 'corner', team: attackTeam, x: leftSide ? 0.4 : PITCH.L - 0.4, z })
+   900→   900→        this.addEvent(`Córner para ${this.squads[attackTeam].roster.def.short}`, 'info')
+   901→   901→      } else {
+   902→   902→        // saque de puerta
+   903→   903→        const z = clamp(GOAL.zCenter + (b.z - GOAL.zCenter) * 0.3, GOAL.zMin + 2, GOAL.zMax - 2)
+   904→   904→        this.setRestart({
+   905→   905→          type: 'goalkick',
+   906→   906→          team: defendingTeam,
+   907→   907→          x: leftSide ? PITCH.sixD : PITCH.L - PITCH.sixD,
+   908→   908→          z,
+   909→   909→        })
+   910→   910→        this.addEvent('Saque de puerta', 'info')
+   911→   911→      }
+   912→   912→      this.pendingShot = false
+   913→   913→    }
+   914→   914→  }
+   915→   915→
+   916→   916→  private handleGoalByGoalLine(side: 0 | 105) {
+   917→   917→    // el arco en x=side lo defiende el equipo cuyo arco propio es ese lado
+   918→   918→    const defender: TeamIndex = this.ownGoalOf(0) === side ? 0 : 1
+   919→   919→    const scorer: TeamIndex = defender === 0 ? 1 : 0
+   920→   920→    this.handleGoal(scorer)
+   921→   921→  }
+   922→   922→}
+   923→   923→

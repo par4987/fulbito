@@ -62,10 +62,29 @@ export const MATCH_RULES = {
   kickoffFreeze: 1.1,
   restartFreeze: 0.9,
   gkHoldTime: 1.1,
-  /** cambios permitidos por equipo */
-  maxSubs: 3,
+  /** cambios permitidos por equipo (reglamento moderno: 5) */
+  maxSubs: 5,
   /** recuperación de resistencia en el descanso */
   halfTimeRecovery: 30,
+} as const
+
+export const FOUL = {
+  /** radio de contacto para que una barrida cometa falta (mayor que la separación física de 1 m) */
+  contactRadius: 1.25,
+  /** probabilidad de falta en entrada de pie fallada */
+  standingFoulChance: 0.28,
+  /** distancia reglamentaria de la barrera */
+  wallDist: 9.15,
+  wallPlayers: 4,
+  /** congelación al pitar la falta */
+  freeKickFreeze: 1.6,
+  penaltyFreeze: 2.0,
+  /** segundos que tiene el ejecutante antes del auto-disparo */
+  setPieceTimeout: 7,
+  /** delay de la CPU para ejecutar el tiro parado */
+  cpuSetPieceDelay: 1.25,
+  /** aturdimiento del jugador derribado */
+  victimStun: 1.0,
 } as const
 
 // Valores por dificultad para la CPU (y leve ajuste al usuario).

@@ -4,6 +4,7 @@ import {
   BALL,
   DIFFICULTY,
   FORMATION_433,
+  FOUL,
   GOAL,
   MATCH_RULES,
   PITCH,
@@ -42,6 +43,9 @@ interface Squad {
   possession: number
   shots: number
   onTarget: number
+  fouls: number
+  yellows: number
+  reds: number
 }
 
 export interface RestartInfo {
@@ -88,6 +92,13 @@ export class Match {
   private celebrateTeam: TeamIndex | null = null
   private kickoffTeam: TeamIndex = 0
   private finished = false
+  /** tarjeta mostrada en pantalla (con temporizador) */
+  cardOverlay: HudState['cardOverlay'] = null
+  private cardTimer = 0
+  /** tiro libre / penal en curso */
+  setPieceInfo: { type: 'freekick' | 'penalty'; team: TeamIndex; x: number; z: number } | null = null
+  private setPieceTaker: PlayerEntity | null = null
+  private setPieceReady = false
 
   constructor(
     config: MatchConfig,
@@ -130,6 +141,9 @@ export class Match {
       possession: 0,
       shots: 0,
       onTarget: 0,
+      fouls: 0,
+      yellows: 0,
+      reds: 0,
     }
   }
 
@@ -167,17 +181,27 @@ export class Match {
     this.phaseTimer = MATCH_RULES.kickoffFreeze
     this.kickoffTeam = kickingTeam
     this.owner = null
+    this.setPieceInfo = null
+    this.setPieceTaker = null
+    this.setPieceReady = false
     this.ball.reset()
     for (const sq of this.squads) this.placeFormation(sq, kickingTeam)
-    const taker = this.squads[kickingTeam].players[9] // FW central
-    taker.teleport(PITCH.L / 2 - this.squads[kickingTeam].attackDir * 0.8, PITCH.W / 2)
-    this.gainControl(taker)
-    this.controlled = kickingTeam === 0 ? taker : null
+    const sqK = this.squads[kickingTeam]
+    let taker = sqK.players[9] // FW central
+    if (!taker || taker.sentOff) {
+      taker = sqK.players.find((p) => !p.isGK && !p.sentOff) ?? taker
+    }
+    if (taker) {
+      taker.teleport(PITCH.L / 2 - this.squads[kickingTeam].attackDir * 0.8, PITCH.W / 2)
+      this.gainControl(taker)
+    }
+    this.controlled = kickingTeam === 0 ? (taker ?? null) : null
     this.audio.whistle(1)
   }
 
   private placeFormation(sq: Squad, kickingTeam: TeamIndex) {
     for (const p of sq.players) {
+      if (p.sentOff) continue // el expulsado permanece fuera del campo
       let wx = sq.attackDir > 0 ? p.ax * PITCH.L : (1 - p.ax) * PITCH.L
       let wz = p.az * PITCH.W
       // todos en su propia mitad en el saque
@@ -209,6 +233,7 @@ export class Match {
     let best: PlayerEntity | null = null
     let bestD = Infinity
     for (const p of squad.players) {
+      if (p.sentOff) continue
       if (info.type === 'goalkick' ? !p.isGK : p.isGK) continue
       const d = dist2d(p.x, p.z, info.x, info.z)
       if (d < bestD) {
@@ -268,6 +293,9 @@ export class Match {
       possession: [Math.round((h.possession / tot) * 100), Math.round((a.possession / tot) * 100)],
       shots: [h.shots, a.shots],
       onTarget: [h.onTarget, a.onTarget],
+      fouls: [h.fouls, a.fouls],
+      yellows: [h.yellows, a.yellows],
+      reds: [h.reds, a.reds],
       events: [...this.events],
       difficulty: this.difficulty,
       durationSec: this.durationSec,
@@ -345,7 +373,7 @@ export class Match {
     let best: PlayerEntity | null = null
     let bestScore = -Infinity
     for (const mate of squad.players) {
-      if (mate === p || mate.isGK) continue
+      if (mate === p || mate.isGK || mate.sentOff) continue
       const dx = mate.x - p.x
       const dz = mate.z - p.z
       const d = Math.hypot(dx, dz)
@@ -367,7 +395,10 @@ export class Match {
   private closestOppDist(p: PlayerEntity): number {
     const opp = this.squads[p.team === 0 ? 1 : 0].players
     let d = Infinity
-    for (const o of opp) d = Math.min(d, dist2d(o.x, o.z, p.x, p.z))
+    for (const o of opp) {
+      if (o.sentOff) continue
+      d = Math.min(d, dist2d(o.x, o.z, p.x, p.z))
+    }
     return d
   }
 
@@ -377,6 +408,7 @@ export class Match {
     const dz = to.z - from.z
     const len = Math.hypot(dx, dz) || 1
     for (const o of opp) {
+      if (o.sentOff) continue
       const t = clamp(((o.x - from.x) * dx + (o.z - from.z) * dz) / (len * len), 0.1, 0.9)
       const px = from.x + dx * t
       const pz = from.z + dz * t
@@ -408,11 +440,12 @@ export class Match {
     this.shotWindow = 1.3
   }
 
-  /** Entrada (presión): intenta robar el balón al dueño cercano. */
+  /** Entrada (presión): intenta robar el balón al dueño cercano. Puede cometer falta. */
   tryTackle(p: PlayerEntity) {
     if (p.tackleCd > 0 || p.stunTimer > 0) return
     p.tackleCd = PLAYER.tackleCooldown
     const owner = this.owner
+    if (owner && owner.isGK && this.gkHold > 0) return // balón en manos del portero
     if (owner && owner.team !== p.team && dist2d(p.x, p.z, owner.x, owner.z) < PLAYER.tackleRange) {
       const prob = 0.45 + p.data.skill * 0.25 + this.diff.tackle * 0.15 - owner.data.skill * 0.2
       if (Math.random() < prob) {
@@ -424,6 +457,10 @@ export class Match {
         this.audio.kick(0.3)
       } else {
         p.stunTimer = 0.35
+        // entrada fallada con contacto: puede ser sancionada
+        if (Math.random() < FOUL.standingFoulChance) {
+          this.awardFoul(p, owner)
+        }
       }
     } else if (!owner && dist2d(p.x, p.z, this.ball.x, this.ball.z) < PLAYER.tackleRange) {
       // empujón al balón libre
@@ -453,6 +490,7 @@ export class Match {
         role: p.data.role,
         stamina: Math.round(p.stamina),
         gk: p.isGK,
+        sentOff: p.sentOff,
       })),
       bench: sq.bench.map((b, i) => ({
         idx: i,
@@ -476,10 +514,12 @@ export class Match {
     const out = sq.players[outIdx]
     const sub = sq.bench[benchIdx]
     if (!out || !sub || sq.benchUsed[benchIdx]) return 'invalido'
+    if (out.sentOff) return 'invalido' // al expulsado no lo reemplaza nadie
     if (out.isGK !== (sub.role === 'GK')) return 'invalido'
     const oldName = out.data.name
     out.data = sub
     out.stamina = 100
+    out.yellowCards = 0 // el que entra llega sin tarjetas
     sq.benchUsed[benchIdx] = true
     sq.subsUsed++
     this.addEvent(`Cambio ${sq.roster.def.short}: entra ${sub.name} por ${oldName}`, 'info')
@@ -488,25 +528,30 @@ export class Match {
 
   private cpuSubTimer = 10
 
-  /** La CPU reemplaza a su jugador de campo más cansado a partir del minuto 55. */
+  /** La CPU reemplaza a sus jugadores más cansados a partir del minuto 50 (hasta 5 cambios). */
   private tryCpuSub() {
     const sq = this.squads[1]
     if (sq.subsUsed >= MATCH_RULES.maxSubs) return
-    if (this.minute() < 55) return
-    let worst: PlayerEntity | null = null
-    let worstIdx = -1
-    for (let i = 0; i < sq.players.length; i++) {
-      const p = sq.players[i]
-      if (p.isGK) continue
-      if (!worst || p.stamina < worst.stamina) {
-        worst = p
-        worstIdx = i
+    if (this.minute() < 50) return
+    // puede hacer hasta dos cambios por revisión si hay varios fundidos
+    for (let n = 0; n < 2; n++) {
+      if (sq.subsUsed >= MATCH_RULES.maxSubs) return
+      let worst: PlayerEntity | null = null
+      let worstIdx = -1
+      for (let i = 0; i < sq.players.length; i++) {
+        const p = sq.players[i]
+        if (p.isGK || p.sentOff) continue
+        if (!worst || p.stamina < worst.stamina) {
+          worst = p
+          worstIdx = i
+        }
       }
+      if (!worst || worst.stamina > 62) return
+      let bi = sq.bench.findIndex((b, i) => !sq.benchUsed[i] && b.role === worst!.data.role)
+      if (bi < 0) bi = sq.bench.findIndex((b, i) => !sq.benchUsed[i] && b.role !== 'GK')
+      if (bi < 0) return
+      this.makeSubstitution(1, worstIdx, bi)
     }
-    if (!worst || worst.stamina > 55) return
-    let bi = sq.bench.findIndex((b, i) => !sq.benchUsed[i] && b.role === worst!.data.role)
-    if (bi < 0) bi = sq.bench.findIndex((b, i) => !sq.benchUsed[i] && b.role !== 'GK')
-    if (bi >= 0) this.makeSubstitution(1, worstIdx, bi)
   }
 
   // ---------------------------------------------------------------- update
@@ -516,6 +561,12 @@ export class Match {
     this.audio.setExcitement(this.excitement * 0.8)
     this.shotWindow = Math.max(0, this.shotWindow - dt)
     if (this.shotWindow === 0) this.pendingShot = false
+
+    // temporizador del overlay de tarjetas
+    if (this.cardTimer > 0) {
+      this.cardTimer -= dt
+      if (this.cardTimer <= 0) this.cardOverlay = null
+    }
 
     // cambios automáticos de la CPU cuando el cansancio aprieta
     // (se revisan en toda fase: las bolas paradas son momento de cambios)
@@ -565,6 +616,10 @@ export class Match {
       case 'play':
         this.updatePlay(dt)
         break
+      case 'freekick':
+      case 'penalty':
+        this.updateSetPiece(dt)
+        break
       case 'full':
         for (const sq of this.squads) for (const p of sq.players) { p.desiredVx = 0; p.desiredVz = 0; p.update(dt) }
         break
@@ -588,6 +643,8 @@ export class Match {
       for (const p of sq.players) p.update(dt)
     }
     this.separatePlayers()
+    // faltas: barridas que golpean rival antes que el balón (detienen la jugada)
+    if (this.checkFouls()) return
     this.updateBallPossession(dt)
     this.checkOutOfBounds()
 
@@ -613,6 +670,7 @@ export class Match {
         let bestD = Infinity
         const nearOwnBox = Math.abs(this.ball.x - this.ownGoalOf(0)) < 20
         for (const p of team0.players) {
+          if (p.sentOff) continue
           if (p.isGK && !nearOwnBox) continue
           const d = dist2d(p.x, p.z, fut.x, fut.z)
           if (d < bestD) {
@@ -683,7 +741,7 @@ export class Match {
         // cambio manual: siguiente más cercano
         const fut = this.ball.future(0.25)
         const others = team0.players
-          .filter((p) => !p.isGK && p !== c)
+          .filter((p) => !p.isGK && !p.sentOff && p !== c)
           .sort((a, b) => dist2d(a.x, a.z, fut.x, fut.z) - dist2d(b.x, b.z, fut.x, fut.z))
         if (others[0]) this.controlled = others[0]
       }
@@ -711,10 +769,350 @@ export class Match {
     return { x, z: -y }
   }
 
+  // ---------------------------------------------------------------- faltas y tiros parados
+
+  /**
+   * Detecta faltas de barrida: si el jugador deslizándose golpea a un rival
+   * sin haber tocado antes el balón, el árbitro pita la falta. Devuelve true
+   * si pitó algo (la jugada se detuvo este frame).
+   */
+  private checkFouls(): boolean {
+    if (this.phase !== 'play') return false
+    const ball = this.ball
+    const all = [...this.squads[0].players, ...this.squads[1].players]
+    for (const p of all) {
+      if (p.sentOff || p.slideTimer <= 0.06) continue
+      const ballDist = dist2d(p.x, p.z, ball.x, ball.z)
+      if (ballDist < PLAYER.tackleRange) {
+        // barrida limpia: llega primero al balón y lo despeja (una sola vez)
+        if (p.kickCooldown <= 0) {
+          const dx = ball.x - p.x
+          const dz = ball.z - p.z
+          const len = Math.hypot(dx, dz) || 1
+          this.loseControl()
+          this.ball.kick(dx / len + p.vx * 0.08, dz / len + p.vz * 0.08, 9.5, 1.4)
+          this.ball.lastTouch = p.team
+          this.lastTouchPlayer = p
+          p.kickCooldown = 0.5
+          const owner = this.owner
+          if (owner && owner.team !== p.team && dist2d(p.x, p.z, owner.x, owner.z) < FOUL.contactRadius) {
+            owner.stunTimer = 0.55 // la barrida limpia también derriba
+          }
+          this.audio.kick(0.45)
+        }
+        continue
+      }
+      for (const o of all) {
+        if (o.sentOff || o.team === p.team) continue
+        if (dist2d(p.x, p.z, o.x, o.z) < FOUL.contactRadius) {
+          this.awardFoul(p, o)
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  /** Sanciona una falta: tarjeta si corresponde y tiro libre o penal. */
+  private awardFoul(offender: PlayerEntity, victim: PlayerEntity) {
+    const sq = this.squads[offender.team]
+    sq.fouls++
+    const speed = offender.speedNow
+    // ¿llegó desde atrás? (proyección del ofensor sobre la dirección del pie del victimario)
+    const relX = offender.x - victim.x
+    const relZ = offender.z - victim.z
+    const relLen = Math.hypot(relX, relZ) || 1
+    const behind = (Math.sin(victim.dir) * relX + Math.cos(victim.dir) * relZ) / relLen < -0.35
+
+    victim.stunTimer = FOUL.victimStun
+    this.loseControl()
+    const fx = clamp(victim.x, 0.5, PITCH.L - 0.5)
+    const fz = clamp(victim.z, 0.5, PITCH.W - 0.5)
+    this.ball.reset(fx, fz)
+
+    // severidad → tarjeta (velocidad de la entrada + jugada por detrás)
+    const sev = speed / 17 + (behind ? 0.4 : 0) + Math.random() * 0.12
+    let card: 'none' | 'yellow' | 'red' = 'none'
+    if (sev > 0.85) card = 'yellow'
+    if (sev > 1.22) card = 'red'
+    if (card === 'yellow' && offender.yellowCards >= 1) card = 'red' // segunda amarilla
+    if (offender.isGK && card === 'red') card = 'yellow' // evitamos dejar el arco vacío
+
+    this.addEvent(`Falta de ${offender.data.name} (${sq.roster.def.short})`, 'info')
+    if (card !== 'none') this.applyCard(offender, card)
+    this.audio.whistle(1)
+    this.excitement = Math.max(this.excitement, 0.45)
+
+    // ¿dentro del área propia del que cometió la falta? → penal
+    const defGoalX = this.ownGoalOf(offender.team)
+    const inBox = Math.abs(fx - defGoalX) < PITCH.boxD && Math.abs(fz - GOAL.zCenter) < PITCH.boxW / 2
+    if (inBox) this.setupPenalty(victim.team)
+    else this.setupFreeKick(victim.team, fx, fz)
+  }
+
+  /** Muestra tarjeta, la registra y expulsa si es roja (o segunda amarilla). */
+  private applyCard(p: PlayerEntity, card: 'yellow' | 'red') {
+    const sq = this.squads[p.team]
+    if (card === 'yellow') {
+      p.yellowCards++
+      sq.yellows++
+      this.cardOverlay = { kind: 'amarilla', player: p.data.name, team: p.team }
+      this.cardTimer = 2.6
+      this.addEvent(`Amarilla para ${p.data.name} (${sq.roster.def.short})`, 'info')
+      if (p.yellowCards >= 2) {
+        this.cardOverlay = { kind: 'roja', player: p.data.name, team: p.team }
+        this.addEvent(`¡Segunda amarilla! ${p.data.name} expulsado`, 'info')
+        this.expel(p)
+      }
+    } else {
+      this.cardOverlay = { kind: 'roja', player: p.data.name, team: p.team }
+      this.cardTimer = 3.0
+      this.addEvent(`¡Roja directa! ${p.data.name} (${sq.roster.def.short}) expulsado`, 'info')
+      this.expel(p)
+    }
+  }
+
+  private expel(p: PlayerEntity) {
+    this.squads[p.team].reds++
+    p.sendOff()
+    if (this.owner === p) this.loseControl()
+    if (this.controlled === p) {
+      let best: PlayerEntity | null = null
+      let bestD = Infinity
+      for (const m of this.squads[p.team].players) {
+        if (m === p || m.sentOff || m.isGK) continue
+        const d = dist2d(m.x, m.z, this.ball.x, this.ball.z)
+        if (d < bestD) {
+          bestD = d
+          best = m
+        }
+      }
+      if (best) this.controlled = best
+    }
+    this.audio.whistle(2)
+  }
+
+  /** Arma el tiro libre: ejecutante detrás del balón y barrera rival a 9,15 m. */
+  private setupFreeKick(team: TeamIndex, x: number, z: number) {
+    this.phase = 'freekick'
+    this.phaseTimer = FOUL.freeKickFreeze
+    this.setPieceInfo = { type: 'freekick', team, x, z }
+    this.setPieceReady = false
+    this.ball.reset(x, z)
+    this.owner = null
+    this.pendingShot = false
+
+    const sq = this.squads[team]
+    let taker: PlayerEntity | null = null
+    let bestScore = -Infinity
+    for (const p of sq.players) {
+      if (p.isGK || p.sentOff) continue
+      const score = p.data.skill * 6 - dist2d(p.x, p.z, x, z) * 0.5
+      if (score > bestScore) {
+        bestScore = score
+        taker = p
+      }
+    }
+    this.setPieceTaker = taker
+    if (taker) {
+      const gx = this.goalOf(team)
+      const dx = gx - x
+      const dz = GOAL.zCenter - z
+      const d = Math.hypot(dx, dz) || 1
+      taker.teleport(x - (dx / d) * 1.1, z - (dz / d) * 1.1)
+      taker.dir = Math.atan2(dx, dz)
+      this.gainControl(taker)
+      this.gkHold = 0
+    }
+    this.buildWall(team === 0 ? 1 : 0, x, z)
+    this.controlled = team === 0 ? taker : null
+  }
+
+  private buildWall(defTeam: TeamIndex, x: number, z: number) {
+    const gx = this.ownGoalOf(defTeam)
+    const dx = gx - x
+    const dz = GOAL.zCenter - z
+    const d = Math.hypot(dx, dz) || 1
+    const ux = dx / d
+    const uz = dz / d
+    const wx = x + ux * FOUL.wallDist
+    const wz = z + uz * FOUL.wallDist
+    const px = -uz
+    const pz = ux
+    const defs = this.squads[defTeam].players
+      .filter((p) => !p.isGK && !p.sentOff)
+      .sort((a, b) => dist2d(a.x, a.z, wx, wz) - dist2d(b.x, b.z, wx, wz))
+      .slice(0, FOUL.wallPlayers)
+    defs.forEach((p, i) => {
+      const off = (i - (defs.length - 1) / 2) * 0.72
+      p.teleport(clamp(wx + px * off, 0.6, PITCH.L - 0.6), clamp(wz + pz * off, 0.6, PITCH.W - 0.6))
+      p.dir = Math.atan2(x - p.x, z - p.z)
+      p.targetX = p.x
+      p.targetZ = p.z
+    })
+  }
+
+  /** Penal: ejecutante, portero en la línea y todos los demás fuera del área. */
+  private setupPenalty(team: TeamIndex) {
+    this.phase = 'penalty'
+    this.phaseTimer = FOUL.penaltyFreeze
+    const defGoalX = this.ownGoalOf(team === 0 ? 1 : 0)
+    const dir = defGoalX < PITCH.L / 2 ? 1 : -1
+    const px = defGoalX + dir * PITCH.spot
+    this.setPieceInfo = { type: 'penalty', team, x: px, z: GOAL.zCenter }
+    this.setPieceReady = false
+    this.addEvent(`¡PENAL para ${this.squads[team].roster.def.short}!`, 'chance')
+    this.ball.reset(px, GOAL.zCenter)
+    this.owner = null
+    this.pendingShot = false
+
+    const sq = this.squads[team]
+    let taker: PlayerEntity | null = null
+    let bestSkill = -1
+    for (const p of sq.players) {
+      if (p.isGK || p.sentOff) continue
+      if (p.data.skill > bestSkill) {
+        bestSkill = p.data.skill
+        taker = p
+      }
+    }
+    this.setPieceTaker = taker
+    if (taker) {
+      taker.teleport(px - dir * 2.2, GOAL.zCenter + 0.4)
+      taker.dir = Math.atan2(defGoalX - taker.x, GOAL.zCenter - taker.z)
+    }
+    const gk = this.squads[team === 0 ? 1 : 0].players[0]
+    gk.teleport(defGoalX + dir * 0.4, GOAL.zCenter)
+    gk.dir = Math.atan2(px - gk.x, GOAL.zCenter - gk.z)
+
+    let side = 1
+    let step = 0
+    for (const other of [...this.squads[0].players, ...this.squads[1].players]) {
+      if (other === taker || other.isGK || other.sentOff) continue
+      const z = GOAL.zCenter + side * (6 + step * 4.5)
+      step++
+      if (step >= 4) {
+        step = 0
+        side *= -1
+      }
+      other.teleport(defGoalX + dir * (PITCH.boxD + 2.5), clamp(z, 3, PITCH.W - 3))
+      other.targetX = other.x
+      other.targetZ = other.z
+    }
+    this.controlled = team === 0 ? taker : null
+    this.audio.whistle(1)
+    this.excitement = Math.max(this.excitement, 0.85)
+  }
+
+  /** Bucle de las fases de tiro libre / penal: congelación → ejecución → juego. */
+  private updateSetPiece(dt: number) {
+    const sp = this.setPieceInfo
+    if (!sp) {
+      this.resumeFromSetPiece()
+      return
+    }
+    for (const sq of this.squads) for (const p of sq.players) { p.desiredVx = 0; p.desiredVz = 0; p.update(dt) }
+    this.ballPrevX = this.ball.x
+    this.phaseTimer -= dt
+    if (this.phaseTimer > 0) return
+
+    if (!this.setPieceReady) {
+      this.setPieceReady = true
+      this.phaseTimer = FOUL.setPieceTimeout
+      return
+    }
+
+    const taker = this.setPieceTaker
+    if (!taker) {
+      this.resumeFromSetPiece()
+      return
+    }
+    if (sp.team === 1) {
+      // la CPU ejecuta tras un breve tiempo de preparación
+      if (this.phaseTimer <= FOUL.setPieceTimeout - FOUL.cpuSetPieceDelay) this.executeSetPiece('auto')
+    } else {
+      this.updateSetPieceHumanInput(dt)
+      if (this.setPieceInfo && this.phaseTimer <= 0) this.executeSetPiece('auto')
+    }
+  }
+
+  /** Entrada humana durante tiro libre / penal propio (jugador fijo, apuntar y ejecutar). */
+  private updateSetPieceHumanInput(dt: number) {
+    const sp = this.setPieceInfo
+    const taker = this.setPieceTaker
+    if (!sp || !taker) return
+    const inp = this.input
+    if (inp.isHeld('shoot')) {
+      this.charging = true
+      this.charge = Math.min(1, this.charge + dt / 0.85)
+    } else if (this.charging) {
+      const world = this.engineMoveToWorld(inp.move.x, inp.move.y)
+      const aim = clamp(world.z, -1, 1)
+      this.doShoot(taker, Math.max(0.3, this.charge), aim)
+      if (sp.type === 'penalty') this.gkGuessDive(taker)
+      this.charge = 0
+      this.charging = false
+      this.resumeFromSetPiece()
+      return
+    }
+    if (inp.consumePressed('pass') || inp.consumePressed('lob')) {
+      const lofted = inp.consumePressed('lob')
+      const world = this.engineMoveToWorld(inp.move.x, inp.move.y)
+      const moving = Math.hypot(world.x, world.z) > 0.1
+      const aim = moving ? world : { x: this.squads[0].attackDir, z: 0 }
+      this.doPass(taker, aim.x, aim.z, lofted)
+      this.charge = 0
+      this.charging = false
+      this.resumeFromSetPiece()
+    }
+  }
+
+  /** Ejecución automática (CPU o timeout humano). */
+  private executeSetPiece(mode: 'auto') {
+    const sp = this.setPieceInfo
+    const taker = this.setPieceTaker
+    if (!sp || !taker) {
+      this.resumeFromSetPiece()
+      return
+    }
+    const gx = this.goalOf(sp.team)
+    const distG = dist2d(taker.x, taker.z, gx, GOAL.zCenter)
+    if (sp.type === 'penalty') {
+      const aim = (Math.random() - 0.5) * 1.5
+      this.doShoot(taker, 0.82 + Math.random() * 0.13, aim)
+      this.gkGuessDive(taker)
+    } else if (distG < 27 && Math.abs(taker.z - GOAL.zCenter) < 14) {
+      // tiro directo al arco
+      this.doShoot(taker, clamp(distG / 30, 0.55, 0.95), (Math.random() - 0.5) * 1.2)
+    } else {
+      // centro / pase al área
+      const dir = this.squads[sp.team].attackDir
+      this.doPass(taker, dir * 10, GOAL.zCenter - taker.z + (Math.random() - 0.5) * 6, true)
+    }
+    this.charge = 0
+    this.charging = false
+    this.resumeFromSetPiece()
+  }
+
+  /** El portero intenta adivinar el lado del disparo (penales). */
+  private gkGuessDive(taker: PlayerEntity) {
+    const gk = this.squads[taker.team === 0 ? 1 : 0].players[0]
+    gk.diveTimer = 0.75
+    gk.diveDir = Math.sign(this.ball.vz) || 1
+    if (Math.random() < 0.4) gk.diveDir = -gk.diveDir
+  }
+
+  private resumeFromSetPiece() {
+    this.setPieceInfo = null
+    this.setPieceTaker = null
+    this.setPieceReady = false
+    if (this.phase === 'freekick' || this.phase === 'penalty') this.phase = 'play'
+  }
+
   // ---------------------------------------------------------------- balón y posesión
 
   private separatePlayers() {
-    const all = [...this.squads[0].players, ...this.squads[1].players]
+    const all = [...this.squads[0].players, ...this.squads[1].players].filter((p) => !p.sentOff)
     for (let i = 0; i < all.length; i++) {
       for (let j = i + 1; j < all.length; j++) {
         const a = all[i]
@@ -793,6 +1191,7 @@ export class Match {
       let best: PlayerEntity | null = null
       let bestD = Infinity
       for (const p of all) {
+        if (p.sentOff) continue
         if (p.kickCooldown > 0 || p.stunTimer > 0 || p.slideTimer > 0) continue
         const d = dist2d(p.x, p.z, ball.x, ball.z)
         if (d < PLAYER.reach && d < bestD) {
@@ -845,7 +1244,7 @@ export class Match {
     let best: PlayerEntity | null = null
     let bestScore = -Infinity
     for (const mate of squad.players) {
-      if (mate === gk) continue
+      if (mate === gk || mate.sentOff) continue
       const d = dist2d(gk.x, gk.z, mate.x, mate.z)
       const open = Math.min(9, this.closestOppDist(mate))
       const score = open * 2 - d * 0.06 + (mate.data.role === 'DF' ? 2 : 0)

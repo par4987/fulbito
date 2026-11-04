@@ -29,13 +29,20 @@ const INITIALS = 'LMJADC FRENGSTIBPHV'.split('')
 
 const rosterCache = new Map<string, TeamRoster>()
 
-/** Puestos del banco de suplentes (5): 1 portero, 2 defensores, 1 mediocampista, 1 delantero. */
+/** Puestos del banco de suplentes (12): 2 porteros, 4 defensores, 4 mediocampistas, 2 delanteros. */
 const BENCH_SLOTS: Array<{ role: PlayerData['role']; num: number }> = [
   { role: 'GK', num: 12 },
   { role: 'DF', num: 13 },
   { role: 'DF', num: 14 },
-  { role: 'MF', num: 15 },
-  { role: 'FW', num: 16 },
+  { role: 'DF', num: 15 },
+  { role: 'DF', num: 16 },
+  { role: 'MF', num: 17 },
+  { role: 'MF', num: 18 },
+  { role: 'MF', num: 19 },
+  { role: 'MF', num: 20 },
+  { role: 'FW', num: 21 },
+  { role: 'FW', num: 22 },
+  { role: 'GK', num: 23 },
 ]
 
 function makePlayerData(slot: { role: PlayerData['role']; num: number }, rng: () => number, base: number, used: Set<string>): PlayerData {
