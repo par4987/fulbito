@@ -64,7 +64,7 @@ function makePlayerData(slot: { role: PlayerData['role']; num: number }, rng: ()
   }
 }
 
-/** Plantilla determinista por equipo: 11 titulares + 5 suplentes según FORMATION_433. */
+/** Plantilla determinista por equipo: 11 titulares + 12 suplentes (banco completo). */
 export function getRoster(teamId: string): TeamRoster {
   const cached = rosterCache.get(teamId)
   if (cached) return cached

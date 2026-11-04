@@ -451,6 +451,7 @@ export default function MatchScreen({ homeId, awayId, settings, onExit }: Props)
 }
 
 function cameraLabel(mode?: string) {
+  if (mode === 'cable') return 'Cable (muy cerca)'
   if (mode === 'cerca') return 'TV cercana'
   if (mode === 'aerea') return 'aérea'
   if (mode === 'arco') return 'tras el arco'

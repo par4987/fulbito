@@ -62,3 +62,23 @@ Stage Summary:
 - 14/14 flujos E2E verificados en navegador (desktop + móvil)
 - Decisión: se descartó el pulido con subagente de styling (Task 4) porque la UI ya pasó verificación visual iterativa en desktop y móvil
 - Nota: existe ?demo=1 (partido de 40s) y window.__fp3d (ref de debug) para pruebas E2E
+
+---
+Task ID: 7
+Agent: Z.ai Code (principal)
+Task: Cámara "Cable" (más cerca de los jugadores) + fix de faltas vs saques
+
+Work Log:
+- Bug reportado por el usuario: un saque lateral se pitaba como tiro libre. Causa raíz en match.ts: updatePlay() corría checkFouls() ANTES que checkOutOfBounds(), así que si el balón salía por la banda en el mismo frame con contacto de una barrida, ganaba la falta. Fix: (1) reordenado updatePlay → updateBallPossession → checkOutOfBounds → si la fase sigue 'play' recién entonces checkFouls (el balón fuera mata la jugada); (2) guardas nuevas en checkFouls() y awardFoul() que anulan faltas si el balón está fuera del campo (z≤0/z≥W/x≤0/x≥L); (3) corregido código muerto en la barrida limpia: el owner se capturaba después de loseControl() (siempre null) → ahora se captura antes y la barrida limpia puede derribar al rival sin ser falta; (4) el despeje automático sin receptor ahora apunta sesgado al centro ((W/2−z)·0.55 + ruido ±4.5) para no regalar la banda y provocar laterales en cadena.
+- Nueva cámara 'cable' (guaya, estilo FIFA clásico): types.ts agrega 'cable' a CameraMode; renderer3d.ts nueva rama que flota sobre el campo siguiendo el balón en X y en Z (cz = bz + 7.8·zoom, clamp a [4, W+3.5]; altura 11.5·zoom con vaivén sinusoidal de guaya ±0.8m), mira con anticipación de velocidad del balón (0.24s) para mantener la jugada centrada; smoothing propio: posición más lenta/pesada (k=2.5) y look más rápido (k2=5.2); respeta el zoom (+/−/rueda: 0.55 = pegadísimo, 1.45 = amplio).
+- engine.ts: cycleCamera ahora ciclása broadcast → cable → cerca → aerea → arco; pasa vx/vz del balón a scene3d.update (nuevo campo opcional) para la anticipación.
+- MatchScreen.tsx: cameraLabel('cable') = "Cable (muy cerca)" (aparece en el HUD y en el menú de pausa).
+- MenuScreen.tsx: ayuda "CÓMO JUGAR" actualizada (menciona la cámara Cable y que el zoom aplica; nueva regla documentada: balón fuera = saque, nunca falta).
+- teams.ts: comentario desactualizado corregido (banco de 12 suplentes, no 5).
+- Verificación E2E con Agent Browser: menú → partido → V a Cable: encuadre muy cercano de jugadores (toma de lateral vista de cerca con evento "Saque de banda" correcto), seguimiento por todo el campo (esquina, bandas opuestas), zoom + / − funcional en Cable, menú de pausa muestra "Cámara: Cable (muy cerca)", faltas siguen pitándose ("Falta de T. Castro (RCU)" → banner "TIRO LIBRE PARA VOS" con controles de ejecución), sin errores de consola ni runtime.
+- bun run lint sin errores; dev.log limpio.
+
+Stage Summary:
+- La cámara Cable (V) muestra a los jugadores mucho más cerca que la TV broadcast, siguiendo la jugada en ambos ejes con vaivén de guaya; zoom operativo en todos los modos.
+- El arbitraje ya respeta la precedencia reglamentaria: balón fuera → lateral/córner/saque de puerta; las faltas solo se pitan con el balón en juego.
+- Banquillo de 12 suplentes y hasta 5 cambios por equipo (confirmado en código y ayuda).

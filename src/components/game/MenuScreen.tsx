@@ -208,7 +208,9 @@ export function ControlsTable() {
       <p className="pt-2 text-xs leading-relaxed text-white/45">
         Consejo: mantén presionado <b className="text-amber-300">Z</b> cerca del arco para cargar la potencia del
         disparo, y usa <b className="text-amber-300">C</b> para centros al área. Con <b className="text-amber-300">V</b>{' '}
-      ciclás entre cámara TV, TV cercana, aérea y tras el arco. En móvil verás joystick y botones táctiles.
+      ciclás entre cámara TV, <b className="text-amber-300">Cable</b> (muy cerca de los jugadores, como la guaya de los
+      FIFA clásicos), TV cercana, aérea y tras el arco; el zoom (+ / − o rueda) también aplica a la Cable. En móvil
+      verás joystick y botones táctiles.
       </p>
       <p className="text-xs leading-relaxed text-white/45">
         <b className="text-amber-300">Cansancio:</b> esprintar agota la resistencia y tus jugadores corren menos;
@@ -219,7 +221,8 @@ export function ControlsTable() {
         <b className="text-amber-300">Faltas:</b> si tu barrida o tu quite golpean al rival antes que al balón, el
         árbitro pita la falta. Las entradas duras o por detrás traen <b className="text-amber-300">amarilla</b> y la
         segunda es <b className="text-rose-300">roja</b>: tu equipo queda con uno menos. Falta en el área ={' '}
-        <b className="text-rose-300">penal</b>; en el resto de la cancha, tiro libre con barrera.
+        <b className="text-rose-300">penal</b>; en el resto de la cancha, tiro libre con barrera. Si el balón ya salió
+        (banda o fondo), la jugada está muerta: se cobra el saque que corresponda, nunca falta.
       </p>
     </div>
   )

@@ -342,9 +342,10 @@ export class Match {
     if (p.kickCooldown > 0) return
     const receiver = this.pickPassTarget(p, aimX, aimZ, lofted)
     if (!receiver) {
-      // despeje hacia adelante
+      // despeje hacia adelante, sesgado al centro para no regalar la banda
       const dir = this.squads[p.team].attackDir
-      this.kickBall(p, dir, (Math.random() - 0.5) * 20, 16, 4)
+      const dzCenter = (PITCH.W / 2 - p.z) * 0.55 + (Math.random() - 0.5) * 9
+      this.kickBall(p, dir, dzCenter, 16, 4)
       return
     }
     const err = (1 - p.data.skill) * this.diff.passErr * (lofted ? 1.6 : 1)
@@ -643,10 +644,14 @@ export class Match {
       for (const p of sq.players) p.update(dt)
     }
     this.separatePlayers()
+    this.updateBallPossession(dt)
+    // saques y goles se evalúan ANTES que las faltas: si el balón ya salió
+    // (banda o línea de meta), la jugada está muerta y nunca se convierte
+    // en tiro libre (bug: un lateral pitado como falta).
+    this.checkOutOfBounds()
+    if (this.phase !== 'play') return
     // faltas: barridas que golpean rival antes que el balón (detienen la jugada)
     if (this.checkFouls()) return
-    this.updateBallPossession(dt)
-    this.checkOutOfBounds()
 
     if (this.owner) this.squads[this.owner.team].possession += dt
 
@@ -779,6 +784,9 @@ export class Match {
   private checkFouls(): boolean {
     if (this.phase !== 'play') return false
     const ball = this.ball
+    // balón fuera del campo: la jugada está muerta, corresponde saque (banda,
+    // córner o puerta) y jamás una falta
+    if (ball.z <= 0 || ball.z >= PITCH.W || ball.x <= 0 || ball.x >= PITCH.L) return false
     const all = [...this.squads[0].players, ...this.squads[1].players]
     for (const p of all) {
       if (p.sentOff || p.slideTimer <= 0.06) continue
@@ -786,6 +794,7 @@ export class Match {
       if (ballDist < PLAYER.tackleRange) {
         // barrida limpia: llega primero al balón y lo despeja (una sola vez)
         if (p.kickCooldown <= 0) {
+          const owner = this.owner // capturar ANTES de soltar el control
           const dx = ball.x - p.x
           const dz = ball.z - p.z
           const len = Math.hypot(dx, dz) || 1
@@ -794,9 +803,9 @@ export class Match {
           this.ball.lastTouch = p.team
           this.lastTouchPlayer = p
           p.kickCooldown = 0.5
-          const owner = this.owner
+          // la barrida limpia puede derribar al rival sin ser falta
           if (owner && owner.team !== p.team && dist2d(p.x, p.z, owner.x, owner.z) < FOUL.contactRadius) {
-            owner.stunTimer = 0.55 // la barrida limpia también derriba
+            owner.stunTimer = 0.55
           }
           this.audio.kick(0.45)
         }
@@ -815,6 +824,8 @@ export class Match {
 
   /** Sanciona una falta: tarjeta si corresponde y tiro libre o penal. */
   private awardFoul(offender: PlayerEntity, victim: PlayerEntity) {
+    // doble seguro: con el balón fuera no hay falta (es saque)
+    if (this.ball.z <= 0 || this.ball.z >= PITCH.W || this.ball.x <= 0 || this.ball.x >= PITCH.L) return
     const sq = this.squads[offender.team]
     sq.fouls++
     const speed = offender.speedNow

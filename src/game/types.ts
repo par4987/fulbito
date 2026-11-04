@@ -2,7 +2,7 @@ export type TeamIndex = 0 | 1
 export type Role = 'GK' | 'DF' | 'MF' | 'FW'
 export type Difficulty = 'amateur' | 'profesional' | 'leyenda'
 export type Phase = 'kickoff' | 'play' | 'goal' | 'restart' | 'freekick' | 'penalty' | 'half' | 'full'
-export type CameraMode = 'broadcast' | 'cerca' | 'aerea' | 'arco'
+export type CameraMode = 'broadcast' | 'cable' | 'cerca' | 'aerea' | 'arco'
 export type CardKind = 'amarilla' | 'roja'
 
 export interface PlayerData {

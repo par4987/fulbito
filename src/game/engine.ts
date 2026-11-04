@@ -129,13 +129,13 @@ export class GameEngine {
       const c = m.controlled
       this.scene3d.update(
         Math.max(raw, SIM.dt),
-        { x: m.ball.x, y: m.ball.y, z: m.ball.z, spinAngle: m.ball.spinAngle, spinAxisX: m.ball.spinAxisX, spinAxisZ: m.ball.spinAxisZ },
+        { x: m.ball.x, y: m.ball.y, z: m.ball.z, spinAngle: m.ball.spinAngle, spinAxisX: m.ball.spinAxisX, spinAxisZ: m.ball.spinAxisZ, vx: m.ball.vx, vz: m.ball.vz },
         c ? { x: c.x, z: c.z, name: c.data.name } : null,
         m.squad(0).attackDir,
       )
     } else {
       // cámara orbital lenta en el menú
-      this.scene3d.update(Math.max(raw, SIM.dt), { x: 52.5, y: 0.2, z: 34, spinAngle: 0, spinAxisX: 0, spinAxisZ: 0 }, null, 1)
+      this.scene3d.update(Math.max(raw, SIM.dt), { x: 52.5, y: 0.2, z: 34, spinAngle: 0, spinAxisX: 0, spinAxisZ: 0, vx: 0, vz: 0 }, null, 1)
     }
     this.scene3d.render()
   }
@@ -153,7 +153,7 @@ export class GameEngine {
   }
 
   cycleCamera() {
-    const order: CameraMode[] = ['broadcast', 'cerca', 'aerea', 'arco']
+    const order: CameraMode[] = ['broadcast', 'cable', 'cerca', 'aerea', 'arco']
     const i = order.indexOf(this.scene3d.mode)
     this.scene3d.mode = order[(i + 1) % order.length]
     this.emitHud(true)

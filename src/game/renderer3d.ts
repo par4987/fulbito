@@ -19,6 +19,9 @@ export class Scene3D {
   private camPos = new THREE.Vector3(PITCH.L / 2, 26, 100)
   private camLook = new THREE.Vector3(PITCH.L / 2, 0, PITCH.W / 2)
   private shake = 0
+  /** velocidad del balón (para la anticipación de cámara) */
+  private ballVx = 0
+  private ballVz = 0
   mode: CameraMode = 'broadcast'
   /** zoom de las cámaras de TV: 0.55 (muy cerca) .. 1.45 (muy lejos); 1 = normal */
   zoom = 1
@@ -161,6 +164,8 @@ export class Scene3D {
     controlled: { x: number; z: number; name: string } | null,
     attackDirUser: 1 | -1,
   ) {
+    this.ballVx = (ball as { vx?: number }).vx ?? 0
+    this.ballVz = (ball as { vz?: number }).vz ?? 0
     // balón
     this.ballMesh.position.set(ball.x, ball.y, ball.z)
     this.ballMesh.rotation.set(0, 0, 0)
@@ -192,6 +197,23 @@ export class Scene3D {
     if (this.mode === 'aerea') {
       desired.set(clamp(bx, 12, PITCH.L - 12), 52, bz + 22)
       look.set(bx, 0, bz)
+    } else if (this.mode === 'cable') {
+      // Cámara "cable" (guaya, tipo FIFA clásico): flota sobre el campo siguiendo
+      // la jugada en X y en Z, baja y muy cerca de los jugadores, con vaivén
+      // suave de guaya. Muestra la acción mucho más cerca que cualquier TV.
+      const z = this.zoom
+      const t = performance.now() * 0.00042
+      const swayX = Math.sin(t) * 0.8
+      const swayY = Math.sin(t * 0.58 + 1.7) * 0.28
+      const cx = clamp(bx + swayX, 3, PITCH.L - 3)
+      const cz = clamp(bz + 7.8 * z, 4, PITCH.W + 3.5)
+      desired.set(cx, 11.5 * z + swayY, cz)
+      // mira un poco adelantada según la velocidad del balón: la jugada queda centrada
+      look.set(
+        clamp(bx + this.ballVx * 0.24, 2, PITCH.L - 2),
+        0.4,
+        clamp(bz + this.ballVz * 0.24 - 1.2, 0.5, PITCH.W - 0.5),
+      )
     } else if (this.mode === 'arco') {
       const gx = attackDirUser > 0 ? PITCH.L : 0
       const s = attackDirUser > 0 ? -1 : 1
@@ -210,8 +232,9 @@ export class Scene3D {
       desired.set(cx, 17.5 * z, PITCH.W + 24 * z)
       look.set(clamp(bx * 0.94, 8, PITCH.L - 8), 0.5, 12 + bz * 0.5)
     }
-    const k = 1 - Math.exp(-3.4 * dt)
-    const k2 = 1 - Math.exp(-4.2 * dt)
+    // la cámara cable se desliza más lenta y pesada, como colgada de una guaya
+    const k = 1 - Math.exp((this.mode === 'cable' ? -2.5 : -3.4) * dt)
+    const k2 = 1 - Math.exp((this.mode === 'cable' ? -5.2 : -4.2) * dt)
     this.camPos.lerp(desired, k)
     this.camLook.lerp(look, k2)
 
