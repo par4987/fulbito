@@ -17,18 +17,22 @@ export class InputManager {
   private pressed = new Set<ActionButton>()
   private onPause: (() => void) | null = null
   private onCamera: (() => void) | null = null
+  private onZoomIn: (() => void) | null = null
+  private onZoomOut: (() => void) | null = null
   private attached = false
 
   private keyDown = (e: KeyboardEvent) => {
     const k = e.key.toLowerCase()
     if (
       ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'shift'].includes(k) ||
-      ['w', 'a', 's', 'd', 'x', 'z', 'c', 'e', 'p', 'v'].includes(k)
+      ['w', 'a', 's', 'd', 'x', 'z', 'c', 'e', 'p', 'v', '+', '-', '='].includes(k)
     ) {
       e.preventDefault()
     }
     if (k === 'p' || k === 'escape') this.onPause?.()
     if (k === 'v') this.onCamera?.()
+    if (k === '+' || k === '=') this.onZoomIn?.()
+    if (k === '-') this.onZoomOut?.()
     this.keys.add(k)
     this.syncFromKeyboard()
   }
@@ -145,5 +149,9 @@ export class InputManager {
   }
   setCameraHandler(fn: (() => void) | null) {
     this.onCamera = fn
+  }
+  setZoomHandlers(zoomIn: (() => void) | null, zoomOut: (() => void) | null) {
+    this.onZoomIn = zoomIn
+    this.onZoomOut = zoomOut
   }
 }

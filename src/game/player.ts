@@ -38,6 +38,8 @@ export class PlayerEntity {
   hasBall = false
   /** multiplicador de velocidad (IA por dificultad / usuario) */
   speedMult = 1
+  /** drenaje de resistencia al esprintar (por segundo); lo fija el partido según su duración */
+  staminaDrainRate = 0.45
 
   kickCooldown = 0
   kickAnim = 0
@@ -136,12 +138,14 @@ export class PlayerEntity {
     return Math.hypot(this.vx, this.vz)
   }
 
-  /** Velocidad máxima actual según contexto. */
+  /** Velocidad máxima actual según contexto (el cansancio penaliza por tramos). */
   maxSpeed(): number {
     let s = PLAYER.baseSpeed * (0.82 + this.data.speed * 0.36) * this.speedMult
     if (this.hasBall) s *= PLAYER.dribbleMult
     if (this.sprinting && this.stamina > 2) s *= PLAYER.sprintMult
-    if (this.stamina < 25) s *= 0.85
+    if (this.stamina < 20) s *= 0.8
+    else if (this.stamina < 40) s *= 0.88
+    else if (this.stamina < 60) s *= 0.96
     return s
   }
 
@@ -171,11 +175,14 @@ export class PlayerEntity {
       this.vx *= Math.exp(-6 * dt)
       this.vz *= Math.exp(-6 * dt)
     } else {
-      // sprint drena resistencia
+      // resistencia: esprintar drena; correr también un poco; caminar/parado recupera
       if (this.sprinting && this.speedNow > 3) {
-        this.stamina = Math.max(0, this.stamina - PLAYER.staminaDrain * dt)
+        this.stamina = Math.max(0, this.stamina - this.staminaDrainRate * dt)
+      } else if (this.speedNow > 5) {
+        this.stamina = Math.max(0, this.stamina - this.staminaDrainRate * 0.25 * dt)
       } else {
-        this.stamina = Math.min(100, this.stamina + PLAYER.staminaRegen * dt)
+        const regen = this.speedNow < 1.5 ? PLAYER.staminaRegenIdle : PLAYER.staminaRegenMove
+        this.stamina = Math.min(100, this.stamina + regen * dt)
       }
       const maxS = this.maxSpeed()
       const desLen = Math.hypot(this.desiredVx, this.desiredVz)

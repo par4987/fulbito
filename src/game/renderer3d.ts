@@ -20,6 +20,9 @@ export class Scene3D {
   private camLook = new THREE.Vector3(PITCH.L / 2, 0, PITCH.W / 2)
   private shake = 0
   mode: CameraMode = 'broadcast'
+  /** zoom de las cámaras de TV: 0.55 (muy cerca) .. 1.45 (muy lejos); 1 = normal */
+  zoom = 1
+  private wheelHandler: ((e: WheelEvent) => void) | null = null
   private container: HTMLElement
   private resizeObs: ResizeObserver
 
@@ -107,7 +110,21 @@ export class Scene3D {
 
     this.resizeObs = new ResizeObserver(() => this.resize())
     this.resizeObs.observe(container)
+    // rueda del ratón: acercar / alejar la cámara de TV
+    this.wheelHandler = (e: WheelEvent) => {
+      e.preventDefault()
+      this.setZoom(this.zoom + Math.sign(e.deltaY) * 0.07)
+    }
+    container.addEventListener('wheel', this.wheelHandler, { passive: false })
     this.resize()
+  }
+
+  setZoom(z: number) {
+    this.zoom = clamp(z, 0.55, 1.45)
+  }
+
+  get zoomPct(): number {
+    return Math.round(this.zoom * 100)
   }
 
   resize() {
@@ -180,9 +197,17 @@ export class Scene3D {
       const s = attackDirUser > 0 ? -1 : 1
       desired.set(gx + s * 24, 10.5, PITCH.W / 2 + (bz - PITCH.W / 2) * 0.4)
       look.set(bx, 1, bz)
+    } else if (this.mode === 'cerca') {
+      // TV cercana: baja, pegada a la línea y siguiendo el balón de cerca
+      const z = this.zoom
+      const cx = clamp(bx * clamp(0.97 + (1 - z) * 0.1, 0.65, 0.995), 6, PITCH.L - 6)
+      desired.set(cx, 10.5 * z, PITCH.W + 13 * z)
+      look.set(clamp(bx, 6, PITCH.L - 6), 0.6, PITCH.W / 2 + (bz - PITCH.W / 2) * 0.72)
     } else {
-      const cx = clamp(bx * 0.88, 14, PITCH.L - 14)
-      desired.set(cx, 17.5, PITCH.W + 24)
+      // TV broadcast clásica; el zoom escala altura y distancia (1 = vista original)
+      const z = this.zoom
+      const cx = clamp(bx * clamp(0.88 + (1 - z) * 0.1, 0.65, 0.99), 10, PITCH.L - 10)
+      desired.set(cx, 17.5 * z, PITCH.W + 24 * z)
       look.set(clamp(bx * 0.94, 8, PITCH.L - 8), 0.5, 12 + bz * 0.5)
     }
     const k = 1 - Math.exp(-3.4 * dt)
@@ -208,6 +233,7 @@ export class Scene3D {
 
   dispose() {
     this.resizeObs.disconnect()
+    if (this.wheelHandler) this.container.removeEventListener('wheel', this.wheelHandler)
     this.renderer.dispose()
     this.ballTexture.dispose()
     this.nameTexture.dispose()

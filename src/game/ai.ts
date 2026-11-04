@@ -84,7 +84,7 @@ export function updateMatchAI(m: Match, dt: number) {
           urgency = 1.05
         } else if (p.data.role === 'DF') {
           // marcaje hombre-zona: entre el rival más cercano y el arco propio
-          const mark = nearestOpponent(m, t, tx, tz, 11)
+          const mark = nearestOpponent(m, t, tx, tz, 13)
           if (mark) {
             const dx = ownGoalX - mark.x
             const dz = GOAL.zCenter - mark.z
@@ -161,18 +161,34 @@ function nearestOpponent(m: Match, team: TeamIndex, x: number, z: number, maxD: 
   return best
 }
 
-/** Posición base del jugador según formación + desplazamiento con el balón. */
+/**
+ * Posición base del jugador según formación + desplazamiento con el balón.
+ * Trabaja en "coordenadas de avance": 0 = línea de arco propio, 105 = arco rival.
+ * La línea defensiva sigue al balón pero con límites estrictos: nunca se pega a
+ * la línea de meta propia ni queda congelada; sube cuando el equipo ataca.
+ */
 function formationTarget(m: Match, sq: ReturnType<Match['squad']>, p: PlayerEntity) {
   const dir = sq.attackDir
-  const homeX = dir > 0 ? p.ax * PITCH.L : (1 - p.ax) * PITCH.L
+  const toAdv = (x: number) => (dir > 0 ? x : PITCH.L - x)
+  const ballAdv = toAdv(m.ball.x)
+  const homeAdv = p.ax * PITCH.L
   const homeZ = p.az * PITCH.W
-  const prog = clamp((m.ball.x - PITCH.L / 2) * dir, -35, 35)
   const hasBall = m.owner ? m.owner.team === p.team : false
-  const shift = prog * 0.5 * dir + (hasBall ? 7 : -5) * dir
-  return {
-    x: clamp(homeX + shift, 1.5, PITCH.L - 1.5),
-    z: clamp(homeZ + (m.ball.z - homeZ) * 0.25, 2, PITCH.W - 2),
+
+  let adv: number
+  if (p.data.role === 'DF') {
+    // línea defensiva: acompana al balón (62% de su avance) con piso de 11 m
+    // desde el arco propio y techo de ~60 m cuando se ataca
+    let line = clamp(ballAdv * 0.62 + (hasBall ? 16 : -2), 11, 60)
+    if (!hasBall) line = Math.min(line, Math.max(11, ballAdv - 3))
+    // laterales un poco más adelantados que los centrales
+    adv = line + (homeAdv - 0.14 * PITCH.L) * 0.55
+  } else {
+    const shift = clamp((ballAdv - PITCH.L / 2) * 0.55, -22, 22) + (hasBall ? 7 : -5)
+    adv = clamp(homeAdv + shift, 8, 100)
   }
+  const x = dir > 0 ? adv : PITCH.L - adv
+  return { x: clamp(x, 1.5, PITCH.L - 1.5), z: clamp(homeZ + (m.ball.z - homeZ) * 0.25, 2, PITCH.W - 2) }
 }
 
 /** Decisiones del jugador con balón controlado por IA. */

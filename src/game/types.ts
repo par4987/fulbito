@@ -2,7 +2,7 @@ export type TeamIndex = 0 | 1
 export type Role = 'GK' | 'DF' | 'MF' | 'FW'
 export type Difficulty = 'amateur' | 'profesional' | 'leyenda'
 export type Phase = 'kickoff' | 'play' | 'goal' | 'restart' | 'half' | 'full'
-export type CameraMode = 'broadcast' | 'aerea' | 'arco'
+export type CameraMode = 'broadcast' | 'cerca' | 'aerea' | 'arco'
 
 export interface PlayerData {
   num: number
@@ -34,6 +34,8 @@ export interface TeamDef {
 export interface TeamRoster {
   def: TeamDef
   players: PlayerData[]
+  /** suplentes disponibles para cambios */
+  bench: PlayerData[]
 }
 
 export interface MatchSettings {
@@ -62,6 +64,23 @@ export interface HudState {
   cameraMode: CameraMode
   muted: boolean
 }
+
+/** Jugador resumido para la interfaz de cambios. */
+export interface SubPlayerInfo {
+  idx: number
+  num: number
+  name: string
+  role: Role
+}
+
+export interface SubState {
+  used: number
+  max: number
+  onField: Array<SubPlayerInfo & { stamina: number; gk: boolean }>
+  bench: Array<SubPlayerInfo & { available: boolean }>
+}
+
+export type SubResult = 'ok' | 'limite' | 'invalido'
 
 export interface FullTimeResult {
   home: TeamDef

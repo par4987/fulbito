@@ -7,7 +7,7 @@ import { BALL, PITCH, clamp } from './constants'
 export class Ball {
   x = PITCH.L / 2
   z = PITCH.W / 2
-  y = BALL.r
+  y: number = BALL.r
   vx = 0
   vy = 0
   vz = 0
@@ -52,7 +52,7 @@ export class Ball {
     this.vz = 0
   }
 
-  update(dt: number): 'post' | null {
+  update(dt: number): 'post' | 'crossbar' | null {
     // Gravedad y aire
     this.vy -= BALL.gravity * dt
     this.vx *= Math.exp(-(this.y > BALL.r * 1.2 ? BALL.airFriction : BALL.rollFriction) * dt)

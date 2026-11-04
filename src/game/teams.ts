@@ -29,34 +29,46 @@ const INITIALS = 'LMJADC FRENGSTIBPHV'.split('')
 
 const rosterCache = new Map<string, TeamRoster>()
 
-/** Plantilla determinista por equipo: 11 jugadores según FORMATION_433. */
+/** Puestos del banco de suplentes (5): 1 portero, 2 defensores, 1 mediocampista, 1 delantero. */
+const BENCH_SLOTS: Array<{ role: PlayerData['role']; num: number }> = [
+  { role: 'GK', num: 12 },
+  { role: 'DF', num: 13 },
+  { role: 'DF', num: 14 },
+  { role: 'MF', num: 15 },
+  { role: 'FW', num: 16 },
+]
+
+function makePlayerData(slot: { role: PlayerData['role']; num: number }, rng: () => number, base: number, used: Set<string>): PlayerData {
+  let name = ''
+  do {
+    const ini = INITIALS[Math.floor(rng() * INITIALS.length)]
+    const sur = SURNAMES[Math.floor(rng() * SURNAMES.length)]
+    name = `${ini}. ${sur}`
+  } while (used.has(name))
+  used.add(name)
+  const roleSkill = slot.role === 'GK' ? 0.05 : slot.role === 'FW' ? 0.12 : slot.role === 'MF' ? 0.06 : 0
+  const roleSpeed = slot.role === 'FW' ? 0.1 : slot.role === 'MF' ? 0.05 : slot.role === 'DF' ? 0.02 : -0.05
+  return {
+    num: slot.num,
+    name,
+    role: slot.role,
+    skill: Math.min(1, Math.max(0.3, base + roleSkill + (rng() - 0.5) * 0.18)),
+    speed: Math.min(1, Math.max(0.3, base + roleSpeed + (rng() - 0.5) * 0.2)),
+  }
+}
+
+/** Plantilla determinista por equipo: 11 titulares + 5 suplentes según FORMATION_433. */
 export function getRoster(teamId: string): TeamRoster {
   const cached = rosterCache.get(teamId)
   if (cached) return cached
   const def = TEAMS.find((t) => t.id === teamId) ?? TEAMS[0]
   const rng = makeRng(hashString('roster:' + def.id))
   const used = new Set<string>()
-  const players: PlayerData[] = FORMATION_433.map((slot) => {
-    let name = ''
-    do {
-      const ini = INITIALS[Math.floor(rng() * INITIALS.length)]
-      const sur = SURNAMES[Math.floor(rng() * SURNAMES.length)]
-      name = `${ini}. ${sur}`
-    } while (used.has(name))
-    used.add(name)
-    // El nivel base del equipo modula habilidad/velocidad por puesto.
-    const base = (def.rating - 70) / 20 // 0.3 .. 1.0
-    const roleSkill = slot.role === 'GK' ? 0.05 : slot.role === 'FW' ? 0.12 : slot.role === 'MF' ? 0.06 : 0
-    const roleSpeed = slot.role === 'FW' ? 0.1 : slot.role === 'MF' ? 0.05 : slot.role === 'DF' ? 0.02 : -0.05
-    return {
-      num: slot.num,
-      name,
-      role: slot.role,
-      skill: Math.min(1, Math.max(0.3, base + roleSkill + (rng() - 0.5) * 0.18)),
-      speed: Math.min(1, Math.max(0.3, base + roleSpeed + (rng() - 0.5) * 0.2)),
-    }
-  })
-  const roster: TeamRoster = { def, players }
+  // El nivel base del equipo modula habilidad/velocidad por puesto.
+  const base = (def.rating - 70) / 20 // 0.3 .. 1.0
+  const players: PlayerData[] = FORMATION_433.map((slot) => makePlayerData(slot, rng, base, used))
+  const bench: PlayerData[] = BENCH_SLOTS.map((slot) => makePlayerData(slot, rng, base, used))
+  const roster: TeamRoster = { def, players, bench }
   rosterCache.set(teamId, roster)
   return roster
 }

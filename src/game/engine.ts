@@ -7,7 +7,15 @@ import * as THREE from 'three'
 import { Scene3D } from './renderer3d'
 import { buildStadium, type StadiumRefs } from './stadium'
 import { getRoster } from './teams'
-import type { CameraMode, FullTimeResult, HudState, MatchConfig, TeamIndex } from './types'
+import type {
+  CameraMode,
+  FullTimeResult,
+  HudState,
+  MatchConfig,
+  SubResult,
+  SubState,
+  TeamIndex,
+} from './types'
 
 /**
  * GameEngine: une la simulación (Match) con el render 3D, el radar,
@@ -40,6 +48,10 @@ export class GameEngine {
     this.input.attach()
     this.input.setPauseHandler(() => this.togglePause())
     this.input.setCameraHandler(() => this.cycleCamera())
+    this.input.setZoomHandlers(
+      () => this.zoomIn(),
+      () => this.zoomOut(),
+    )
     this.running = true
     this.lastT = performance.now()
     this.raf = requestAnimationFrame(this.loop)
@@ -141,11 +153,37 @@ export class GameEngine {
   }
 
   cycleCamera() {
-    const order: CameraMode[] = ['broadcast', 'aerea', 'arco']
+    const order: CameraMode[] = ['broadcast', 'cerca', 'aerea', 'arco']
     const i = order.indexOf(this.scene3d.mode)
     this.scene3d.mode = order[(i + 1) % order.length]
     this.emitHud(true)
     return this.scene3d.mode
+  }
+
+  /** Acercar la cámara de TV (también con la rueda del ratón o la tecla +). */
+  zoomIn() {
+    this.scene3d.setZoom(this.scene3d.zoom - 0.12)
+    this.emitHud(true)
+  }
+
+  /** Alejar la cámara de TV (también con la rueda del ratón o la tecla -). */
+  zoomOut() {
+    this.scene3d.setZoom(this.scene3d.zoom + 0.12)
+    this.emitHud(true)
+  }
+
+  get zoomPct(): number {
+    return this.scene3d.zoomPct
+  }
+
+  // ---------------------------------------------------------------- cambios
+
+  getSubState(team: TeamIndex): SubState | null {
+    return this.match ? this.match.getSubState(team) : null
+  }
+
+  makeSub(team: TeamIndex, outIdx: number, benchIdx: number): SubResult {
+    return this.match ? this.match.makeSubstitution(team, outIdx, benchIdx) : 'invalido'
   }
 
   setCameraMode(mode: CameraMode) {

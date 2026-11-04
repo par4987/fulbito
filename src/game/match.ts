@@ -15,6 +15,7 @@ import type { InputManager } from './input'
 import { PlayerEntity, type KitMaterials } from './player'
 import { getRoster } from './teams'
 import type {
+  CameraMode,
   Difficulty,
   FullTimeResult,
   HudState,
@@ -22,6 +23,8 @@ import type {
   MatchEvent,
   MatchSettings,
   PlayerData,
+  SubResult,
+  SubState,
   TeamIndex,
   TeamRoster,
 } from './types'
@@ -30,6 +33,10 @@ import { updateMatchAI } from './ai'
 interface Squad {
   roster: TeamRoster
   players: PlayerEntity[]
+  /** suplentes (banco) y marca de los ya utilizados */
+  bench: PlayerData[]
+  benchUsed: boolean[]
+  subsUsed: number
   attackDir: 1 | -1
   score: number
   possession: number
@@ -48,7 +55,7 @@ export class Match {
   config: MatchConfig
   settings: MatchSettings
   difficulty: Difficulty
-  diff = DIFFICULTY.profesional
+  diff: (typeof DIFFICULTY)[Difficulty] = DIFFICULTY.profesional
   squads: [Squad, Squad]
   ball = new Ball()
   phase: HudState['phase'] = 'kickoff'
@@ -75,7 +82,7 @@ export class Match {
   private shotTeam: TeamIndex | null = null
   private pendingShot = false
   private lastOutWasNearMiss = false
-  private aiPassHint: PlayerEntity | null = null
+  aiPassHint: PlayerEntity | null = null
   private ballPrevX = 0
   private celebrateScorer: string | null = null
   private celebrateTeam: TeamIndex | null = null
@@ -108,7 +115,22 @@ export class Match {
       (data: PlayerData, i) =>
         new PlayerEntity(data, team, FORMATION_433[i].ax, FORMATION_433[i].az, this.kitMats[team]),
     )
-    return { roster, players, attackDir, score: 0, possession: 0, shots: 0, onTarget: 0 }
+    // el drenaje se escala con la duración real del partido para que el cansancio
+    // importe tanto en un partido de 3 como de 8 minutos
+    const drain = clamp(PLAYER.staminaDrainRef / this.durationSec, 0.25, 0.95)
+    for (const p of players) p.staminaDrainRate = drain
+    return {
+      roster,
+      players,
+      bench: roster.bench,
+      benchUsed: roster.bench.map(() => false),
+      subsUsed: 0,
+      attackDir,
+      score: 0,
+      possession: 0,
+      shots: 0,
+      onTarget: 0,
+    }
   }
 
   get teams() {
@@ -416,6 +438,77 @@ export class Match {
     p.startSlide(dx, dz)
   }
 
+  // ---------------------------------------------------------------- cambios
+
+  /** Estado para la interfaz de cambios (titulares con resistencia + banco). */
+  getSubState(team: TeamIndex): SubState {
+    const sq = this.squads[team]
+    return {
+      used: sq.subsUsed,
+      max: MATCH_RULES.maxSubs,
+      onField: sq.players.map((p, i) => ({
+        idx: i,
+        num: p.data.num,
+        name: p.data.name,
+        role: p.data.role,
+        stamina: Math.round(p.stamina),
+        gk: p.isGK,
+      })),
+      bench: sq.bench.map((b, i) => ({
+        idx: i,
+        num: b.num,
+        name: b.name,
+        role: b.role,
+        available: !sq.benchUsed[i],
+      })),
+    }
+  }
+
+  /**
+   * Realiza un cambio: el titular conserva su puesto en la formación y el rig 3D;
+   * solo se rebrandea (nombre, dorsal, atributos) y recupera resistencia.
+   * Portero solo por portero (el rig del ARQ es distinto y su IA es especial).
+   */
+  makeSubstitution(team: TeamIndex, outIdx: number, benchIdx: number): SubResult {
+    if (this.phase === 'full') return 'invalido'
+    const sq = this.squads[team]
+    if (sq.subsUsed >= MATCH_RULES.maxSubs) return 'limite'
+    const out = sq.players[outIdx]
+    const sub = sq.bench[benchIdx]
+    if (!out || !sub || sq.benchUsed[benchIdx]) return 'invalido'
+    if (out.isGK !== (sub.role === 'GK')) return 'invalido'
+    const oldName = out.data.name
+    out.data = sub
+    out.stamina = 100
+    sq.benchUsed[benchIdx] = true
+    sq.subsUsed++
+    this.addEvent(`Cambio ${sq.roster.def.short}: entra ${sub.name} por ${oldName}`, 'info')
+    return 'ok'
+  }
+
+  private cpuSubTimer = 10
+
+  /** La CPU reemplaza a su jugador de campo más cansado a partir del minuto 55. */
+  private tryCpuSub() {
+    const sq = this.squads[1]
+    if (sq.subsUsed >= MATCH_RULES.maxSubs) return
+    if (this.minute() < 55) return
+    let worst: PlayerEntity | null = null
+    let worstIdx = -1
+    for (let i = 0; i < sq.players.length; i++) {
+      const p = sq.players[i]
+      if (p.isGK) continue
+      if (!worst || p.stamina < worst.stamina) {
+        worst = p
+        worstIdx = i
+      }
+    }
+    if (!worst || worst.stamina > 55) return
+    let bi = sq.bench.findIndex((b, i) => !sq.benchUsed[i] && b.role === worst!.data.role)
+    if (bi < 0) bi = sq.bench.findIndex((b, i) => !sq.benchUsed[i] && b.role !== 'GK')
+    if (bi >= 0) this.makeSubstitution(1, worstIdx, bi)
+  }
+
   // ---------------------------------------------------------------- update
 
   update(dt: number) {
@@ -423,6 +516,16 @@ export class Match {
     this.audio.setExcitement(this.excitement * 0.8)
     this.shotWindow = Math.max(0, this.shotWindow - dt)
     if (this.shotWindow === 0) this.pendingShot = false
+
+    // cambios automáticos de la CPU cuando el cansancio aprieta
+    // (se revisan en toda fase: las bolas paradas son momento de cambios)
+    if (this.phase !== 'full') {
+      this.cpuSubTimer -= dt
+      if (this.cpuSubTimer <= 0) {
+        this.cpuSubTimer = 8
+        this.tryCpuSub()
+      }
+    }
 
     switch (this.phase) {
       case 'kickoff':
@@ -433,6 +536,9 @@ export class Match {
           if (this.phaseTimer <= 0) {
             this.half = 2
             for (const sq of this.squads) sq.attackDir = (sq.attackDir * -1) as 1 | -1
+            // descanso: los jugadores recuperan resistencia en el mediempo
+            for (const sq of this.squads)
+              for (const p of sq.players) p.stamina = Math.min(100, p.stamina + MATCH_RULES.halfTimeRecovery)
             this.setupKickoff(1)
             this.addEvent('Comienza el segundo tiempo', 'info')
           }
@@ -594,7 +700,7 @@ export class Match {
   }
 
   /** Traduce input de pantalla a mundo según el modo de cámara (seteado por el engine). */
-  cameraMode: 'broadcast' | 'aerea' | 'arco' = 'broadcast'
+  cameraMode: CameraMode = 'broadcast'
   attackDirUser: 1 | -1 = 1
   private engineMoveToWorld(x: number, y: number): { x: number; z: number } {
     if (this.cameraMode === 'arco') {

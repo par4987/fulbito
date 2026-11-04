@@ -1,12 +1,26 @@
 'use client'
 
-import { Camera, Home, Maximize, Minimize, Pause, Play, RefreshCw, Volume2, VolumeX } from 'lucide-react'
+import {
+  Camera,
+  Home,
+  Maximize,
+  Minimize,
+  Pause,
+  Play,
+  RefreshCw,
+  Repeat,
+  Volume2,
+  VolumeX,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import TouchControls from '@/components/game/TouchControls'
 import { Button } from '@/components/ui/button'
 import { GameEngine } from '@/game/engine'
 import { TEAMS } from '@/game/teams'
-import type { Difficulty, FullTimeResult, HudState, MatchSettings } from '@/game/types'
+import type { Difficulty, FullTimeResult, HudState, MatchSettings, SubResult, SubState } from '@/game/types'
 
 interface Props {
   homeId: string
@@ -29,6 +43,8 @@ export default function MatchScreen({ homeId, awayId, settings, onExit }: Props)
   const [isTouch, setIsTouch] = useState(false)
   const [isFull, setIsFull] = useState(false)
   const [matchKey, setMatchKey] = useState(0)
+  const [subsOpen, setSubsOpen] = useState(false)
+  const [subState, setSubState] = useState<SubState | null>(null)
 
   const home = TEAMS.find((t) => t.id === homeId) ?? TEAMS[0]
   const away = TEAMS.find((t) => t.id === awayId) ?? TEAMS[1]
@@ -130,8 +146,20 @@ export default function MatchScreen({ homeId, awayId, settings, onExit }: Props)
   const rematch = () => {
     setResult(null)
     setSaveState('idle')
+    setSubsOpen(false)
     setMatchKey((k) => k + 1)
   }
+
+  const openSubs = () => {
+    setSubState(engineRef.current?.getSubState(0) ?? null)
+    setSubsOpen(true)
+  }
+
+  const confirmSub = useCallback((outIdx: number, benchIdx: number): SubResult => {
+    const r = engineRef.current?.makeSub(0, outIdx, benchIdx) ?? 'invalido'
+    setSubState(engineRef.current?.getSubState(0) ?? null)
+    return r
+  }, [])
 
   return (
     <div className="fp3d-no-select fixed inset-0 z-50 overflow-hidden bg-black">
@@ -184,6 +212,14 @@ export default function MatchScreen({ homeId, awayId, settings, onExit }: Props)
         <HudBtn onClick={cycleCamera} label="Cámara (V)">
           <Camera className="h-4 w-4" />
         </HudBtn>
+        <div className="flex gap-1.5">
+          <HudBtn onClick={() => engineRef.current?.zoomIn()} label="Acercar cámara (+)">
+            <ZoomIn className="h-4 w-4" />
+          </HudBtn>
+          <HudBtn onClick={() => engineRef.current?.zoomOut()} label="Alejar cámara (-)">
+            <ZoomOut className="h-4 w-4" />
+          </HudBtn>
+        </div>
         <HudBtn onClick={toggleMute} label={muted ? 'Activar sonido' : 'Silenciar'}>
           {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
         </HudBtn>
@@ -221,10 +257,23 @@ export default function MatchScreen({ homeId, awayId, settings, onExit }: Props)
             {hud.controlled.num}
           </span>
           <div>
-            <div className="text-xs font-extrabold uppercase tracking-wide">{hud.controlled.name}</div>
+            <div className="flex items-center gap-2">
+              <div className="text-xs font-extrabold uppercase tracking-wide">{hud.controlled.name}</div>
+              {hud.controlled.stamina < 25 && (
+                <span className="animate-pulse text-[9px] font-black uppercase tracking-widest text-rose-400">
+                  Cansado
+                </span>
+              )}
+            </div>
             <div className="mt-0.5 h-1 w-20 overflow-hidden rounded-full bg-white/15">
               <div
-                className={`h-full rounded-full ${hud.controlled.stamina > 35 ? 'bg-emerald-400' : 'bg-rose-400'}`}
+                className={`h-full rounded-full ${
+                  hud.controlled.stamina > 55
+                    ? 'bg-emerald-400'
+                    : hud.controlled.stamina > 25
+                      ? 'bg-amber-400'
+                      : 'bg-rose-400'
+                }`}
                 style={{ width: `${hud.controlled.stamina}%` }}
               />
             </div>
@@ -271,37 +320,67 @@ export default function MatchScreen({ homeId, awayId, settings, onExit }: Props)
 
       {/* overlay de pausa */}
       {paused && !result && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/65 backdrop-blur-sm">
-          <div className="fp3d-fade-up w-[min(92vw,380px)] rounded-2xl border border-white/12 bg-zinc-950/90 p-6 text-white shadow-2xl">
-            <h2 className="text-center text-2xl font-black italic uppercase tracking-tight text-amber-300">Pausa</h2>
-            <div className="mt-5 flex flex-col gap-2.5">
-              <Button onClick={togglePause} className="h-11 bg-amber-400 font-extrabold text-black hover:bg-amber-300">
-                <Play className="mr-2 h-4 w-4" /> Reanudar
-              </Button>
-              <Button
-                onClick={cycleCamera}
-                variant="outline"
-                className="h-11 border-white/20 bg-white/5 font-bold text-white hover:bg-white/10 hover:text-white"
-              >
-                <Camera className="mr-2 h-4 w-4" /> Cámara: {cameraLabel(hud?.cameraMode)}
-              </Button>
-              <Button
-                onClick={toggleMute}
-                variant="outline"
-                className="h-11 border-white/20 bg-white/5 font-bold text-white hover:bg-white/10 hover:text-white"
-              >
-                {muted ? <VolumeX className="mr-2 h-4 w-4" /> : <Volume2 className="mr-2 h-4 w-4" />}
-                {muted ? 'Sonido: apagado' : 'Sonido: encendido'}
-              </Button>
-              <Button
-                onClick={onExit}
-                variant="outline"
-                className="h-11 border-rose-400/40 bg-rose-500/10 font-bold text-rose-200 hover:bg-rose-500/20 hover:text-rose-100"
-              >
-                <Home className="mr-2 h-4 w-4" /> Salir al menú
-              </Button>
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/65 p-3 backdrop-blur-sm">
+          {subsOpen ? (
+            <SubsPanel state={subState} onConfirm={confirmSub} onClose={() => setSubsOpen(false)} />
+          ) : (
+            <div className="fp3d-fade-up w-[min(92vw,380px)] rounded-2xl border border-white/12 bg-zinc-950/90 p-6 text-white shadow-2xl">
+              <h2 className="text-center text-2xl font-black italic uppercase tracking-tight text-amber-300">Pausa</h2>
+              <div className="mt-5 flex flex-col gap-2.5">
+                <Button onClick={togglePause} className="h-11 bg-amber-400 font-extrabold text-black hover:bg-amber-300">
+                  <Play className="mr-2 h-4 w-4" /> Reanudar
+                </Button>
+                <Button
+                  onClick={cycleCamera}
+                  variant="outline"
+                  className="h-11 border-white/20 bg-white/5 font-bold text-white hover:bg-white/10 hover:text-white"
+                >
+                  <Camera className="mr-2 h-4 w-4" /> Cámara: {cameraLabel(hud?.cameraMode)}
+                </Button>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <Button
+                    onClick={() => engineRef.current?.zoomIn()}
+                    variant="outline"
+                    className="h-11 border-white/20 bg-white/5 font-bold text-white hover:bg-white/10 hover:text-white"
+                  >
+                    <ZoomIn className="mr-1.5 h-4 w-4" /> Acercar
+                  </Button>
+                  <Button
+                    onClick={() => engineRef.current?.zoomOut()}
+                    variant="outline"
+                    className="h-11 border-white/20 bg-white/5 font-bold text-white hover:bg-white/10 hover:text-white"
+                  >
+                    <ZoomOut className="mr-1.5 h-4 w-4" /> Alejar
+                  </Button>
+                </div>
+                <Button
+                  onClick={openSubs}
+                  variant="outline"
+                  className="h-11 border-white/20 bg-white/5 font-bold text-white hover:bg-white/10 hover:text-white"
+                >
+                  <Repeat className="mr-2 h-4 w-4" /> Hacer cambios
+                </Button>
+                <Button
+                  onClick={toggleMute}
+                  variant="outline"
+                  className="h-11 border-white/20 bg-white/5 font-bold text-white hover:bg-white/10 hover:text-white"
+                >
+                  {muted ? <VolumeX className="mr-2 h-4 w-4" /> : <Volume2 className="mr-2 h-4 w-4" />}
+                  {muted ? 'Sonido: apagado' : 'Sonido: encendido'}
+                </Button>
+                <Button
+                  onClick={onExit}
+                  variant="outline"
+                  className="h-11 border-rose-400/40 bg-rose-500/10 font-bold text-rose-200 hover:bg-rose-500/20 hover:text-rose-100"
+                >
+                  <Home className="mr-2 h-4 w-4" /> Salir al menú
+                </Button>
+              </div>
+              <p className="mt-3 text-center text-[10px] text-white/40">
+                Zoom con la rueda del ratón o las teclas + / -
+              </p>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -319,6 +398,7 @@ export default function MatchScreen({ homeId, awayId, settings, onExit }: Props)
 }
 
 function cameraLabel(mode?: string) {
+  if (mode === 'cerca') return 'TV cercana'
   if (mode === 'aerea') return 'aérea'
   if (mode === 'arco') return 'tras el arco'
   return 'TV (broadcast)'
@@ -345,6 +425,173 @@ function HudBtn({
       {children}
     </button>
   )
+}
+
+/** Panel de cambios: elige titular que sale + suplente que entra (máx. 3 por equipo). */
+function SubsPanel({
+  state,
+  onConfirm,
+  onClose,
+}: {
+  state: SubState | null
+  onConfirm: (outIdx: number, benchIdx: number) => SubResult
+  onClose: () => void
+}) {
+  // el panel solo se muestra en pausa (simulación congelada); el estado lo trae el padre
+  const [outIdx, setOutIdx] = useState<number | null>(null)
+  const [benchIdx, setBenchIdx] = useState<number | null>(null)
+  const [msg, setMsg] = useState('')
+
+  if (!state) {
+    return (
+      <div className="fp3d-fade-up rounded-2xl border border-white/12 bg-zinc-950/90 p-6 text-white shadow-2xl">
+        Cargando plantilla…
+      </div>
+    )
+  }
+
+  const outPlayer = state.onField.find((p) => p.idx === outIdx) ?? null
+  const benchPlayer = state.bench.find((b) => b.idx === benchIdx) ?? null
+  const remaining = state.max - state.used
+  const compatible = !outPlayer || !benchPlayer || outPlayer.gk === (benchPlayer.role === 'GK')
+  const canConfirm = outPlayer && benchPlayer && compatible && remaining > 0
+
+  const confirm = () => {
+    if (outIdx === null || benchIdx === null) return
+    const r = onConfirm(outIdx, benchIdx)
+    if (r === 'ok') {
+      setMsg('Cambio realizado ✓')
+      setOutIdx(null)
+      setBenchIdx(null)
+    } else if (r === 'limite') {
+      setMsg('No quedan cambios disponibles')
+    } else {
+      setMsg('Cambio inválido (revisá las posiciones)')
+    }
+  }
+
+  return (
+    <div className="fp3d-fade-up w-[min(94vw,600px)] rounded-2xl border border-white/12 bg-zinc-950/95 p-4 text-white shadow-2xl sm:p-5">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-black italic uppercase tracking-tight text-amber-300">Cambios</h2>
+        <span className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-bold">
+          Restan <b className={remaining > 0 ? 'text-emerald-400' : 'text-rose-400'}>{remaining}</b> de {state.max}
+        </span>
+      </div>
+      <p className="mt-1 text-[11px] text-white/45">
+        Elegí quién sale y quién entra. El suplente entra fresco (resistencia 100).
+      </p>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        {/* titulares en cancha */}
+        <div>
+          <div className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-white/45">En cancha (sale)</div>
+          <div className="fp3d-scroll max-h-56 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.03] p-1.5 sm:max-h-64">
+            {state.onField.map((p) => {
+              const sel = p.idx === outIdx
+              return (
+                <button
+                  key={p.idx}
+                  onClick={() => setOutIdx(sel ? null : p.idx)}
+                  className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition ${
+                    sel ? 'bg-amber-400/20 ring-1 ring-amber-300' : 'hover:bg-white/5'
+                  }`}
+                >
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/12 text-[10px] font-black">
+                    {p.num}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-bold">{p.name}</span>
+                    <span className="mt-0.5 block h-1 w-full overflow-hidden rounded-full bg-white/10">
+                      <span
+                        className={`block h-full rounded-full ${
+                          p.stamina > 55 ? 'bg-emerald-400' : p.stamina > 25 ? 'bg-amber-400' : 'bg-rose-400'
+                        }`}
+                        style={{ width: `${p.stamina}%` }}
+                      />
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-[9px] font-bold uppercase text-white/40">{roleLabel(p.role)}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* banco */}
+        <div>
+          <div className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-white/45">Suplentes (entra)</div>
+          <div className="fp3d-scroll max-h-56 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.03] p-1.5 sm:max-h-64">
+            {state.bench.map((b) => {
+              const sel = b.idx === benchIdx
+              const disabled = !b.available
+              return (
+                <button
+                  key={b.idx}
+                  disabled={disabled}
+                  onClick={() => setBenchIdx(sel ? null : b.idx)}
+                  className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition ${
+                    disabled
+                      ? 'cursor-not-allowed opacity-35'
+                      : sel
+                        ? 'bg-emerald-400/20 ring-1 ring-emerald-300'
+                        : 'hover:bg-white/5'
+                  }`}
+                >
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/25 text-[10px] font-black">
+                    {b.num}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs font-bold">{b.name}</span>
+                  <span className="shrink-0 text-[9px] font-bold uppercase text-white/40">{roleLabel(b.role)}</span>
+                  {disabled && <span className="text-[9px] font-bold text-rose-300">usado</span>}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <div className="min-w-0 flex-1 text-xs font-semibold">
+          {msg ? (
+            <span className="text-emerald-300">{msg}</span>
+          ) : outPlayer && benchPlayer && !compatible ? (
+            <span className="text-rose-300">El portero solo puede ser reemplazado por otro portero</span>
+          ) : outPlayer || benchPlayer ? (
+            <span className="text-white/60">
+              {outPlayer ? `Sale ${outPlayer.name}` : 'Elegí quién sale'} ·{' '}
+              {benchPlayer ? `entra ${benchPlayer.name}` : 'elegí quién entra'}
+            </span>
+          ) : (
+            <span className="text-white/35">Seleccioná un jugador de cada lista</span>
+          )}
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <Button
+            onClick={onClose}
+            variant="outline"
+            className="h-10 border-white/20 bg-white/5 px-4 font-bold text-white hover:bg-white/10 hover:text-white"
+          >
+            <X className="mr-1.5 h-4 w-4" /> Volver
+          </Button>
+          <Button
+            onClick={confirm}
+            disabled={!canConfirm}
+            className="h-10 bg-amber-400 px-4 font-extrabold text-black hover:bg-amber-300 disabled:opacity-40"
+          >
+            <Repeat className="mr-1.5 h-4 w-4" /> Confirmar
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function roleLabel(role: string): string {
+  if (role === 'GK') return 'ARQ'
+  if (role === 'DF') return 'DEF'
+  if (role === 'MF') return 'MED'
+  return 'DEL'
 }
 
 /** Barra de potencia que se actualiza cada frame vía rAF. */

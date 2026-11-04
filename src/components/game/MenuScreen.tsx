@@ -192,7 +192,8 @@ export function ControlsTable() {
     ['Barrida (sin balón)', 'Z'],
     ['Cambiar jugador', 'E / C'],
     ['Cambiar cámara', 'V'],
-    ['Pausa', 'P / Esc'],
+    ['Zoom de cámara', '+ / - o rueda'],
+    ['Pausa · cambios', 'P / Esc'],
   ]
   return (
     <div className="mt-1 space-y-1.5">
@@ -206,8 +207,13 @@ export function ControlsTable() {
       ))}
       <p className="pt-2 text-xs leading-relaxed text-white/45">
         Consejo: mantén presionado <b className="text-amber-300">Z</b> cerca del arco para cargar la potencia del
-        disparo, y usa <b className="text-amber-300">C</b> para centros al área. En móvil verás joystick y botones
-        táctiles.
+        disparo, y usa <b className="text-amber-300">C</b> para centros al área. Con <b className="text-amber-300">V</b>{' '}
+      ciclás entre cámara TV, TV cercana, aérea y tras el arco. En móvil verás joystick y botones táctiles.
+      </p>
+      <p className="text-xs leading-relaxed text-white/45">
+        <b className="text-amber-300">Cansancio:</b> esprintar agota la resistencia y tus jugadores corren menos;
+        en la pausa podés hacer hasta <b className="text-amber-300">3 cambios</b> para meter piernas frescas (la CPU
+        también cambia a sus cansados). En el mediempo todos recuperan aire.
       </p>
     </div>
   )

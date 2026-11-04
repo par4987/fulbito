@@ -43,8 +43,10 @@ export const PLAYER = {
   accel: 30,
   decel: 13,
   turnLerp: 12,
-  staminaDrain: 6.5,
-  staminaRegen: 5.0,
+  /** drenaje base al esprintar; el partido lo escala según su duración real */
+  staminaDrainRef: 120, // presupuesto de resistencia por segundo de partido
+  staminaRegenMove: 0.3,
+  staminaRegenIdle: 0.55,
   kickCooldown: 0.4,
   slideSpeed: 12.5,
   slideTime: 0.5,
@@ -60,6 +62,10 @@ export const MATCH_RULES = {
   kickoffFreeze: 1.1,
   restartFreeze: 0.9,
   gkHoldTime: 1.1,
+  /** cambios permitidos por equipo */
+  maxSubs: 3,
+  /** recuperación de resistencia en el descanso */
+  halfTimeRecovery: 30,
 } as const
 
 // Valores por dificultad para la CPU (y leve ajuste al usuario).
