@@ -199,20 +199,21 @@ export class Scene3D {
       look.set(bx, 0, bz)
     } else if (this.mode === 'cable') {
       // Cámara "cable" (guaya, tipo FIFA clásico): flota sobre el campo siguiendo
-      // la jugada en X y en Z, baja y muy cerca de los jugadores, con vaivén
-      // suave de guaya. Muestra la acción mucho más cerca que cualquier TV.
+      // la jugada en X y en Z, con vaivén suave de guaya. Altura intermedia:
+      // más alejada que antes (se ven los jugadores con contexto a su alrededor)
+      // pero todavía bastante más cerca que cualquier cámara de TV.
       const z = this.zoom
       const t = performance.now() * 0.00042
-      const swayX = Math.sin(t) * 0.8
-      const swayY = Math.sin(t * 0.58 + 1.7) * 0.28
-      const cx = clamp(bx + swayX, 3, PITCH.L - 3)
-      const cz = clamp(bz + 7.8 * z, 4, PITCH.W + 3.5)
-      desired.set(cx, 11.5 * z + swayY, cz)
+      const swayX = Math.sin(t) * 1.0
+      const swayY = Math.sin(t * 0.58 + 1.7) * 0.34
+      const cx = clamp(bx + swayX, 2.5, PITCH.L - 2.5)
+      const cz = clamp(bz + 11 * z, 3, PITCH.W + 5)
+      desired.set(cx, 15.5 * z + swayY, cz)
       // mira un poco adelantada según la velocidad del balón: la jugada queda centrada
       look.set(
-        clamp(bx + this.ballVx * 0.24, 2, PITCH.L - 2),
+        clamp(bx + this.ballVx * 0.27, 2, PITCH.L - 2),
         0.4,
-        clamp(bz + this.ballVz * 0.24 - 1.2, 0.5, PITCH.W - 0.5),
+        clamp(bz + this.ballVz * 0.27 - 1.2, 0.5, PITCH.W - 0.5),
       )
     } else if (this.mode === 'arco') {
       const gx = attackDirUser > 0 ? PITCH.L : 0
@@ -232,9 +233,9 @@ export class Scene3D {
       desired.set(cx, 17.5 * z, PITCH.W + 24 * z)
       look.set(clamp(bx * 0.94, 8, PITCH.L - 8), 0.5, 12 + bz * 0.5)
     }
-    // la cámara cable se desliza más lenta y pesada, como colgada de una guaya
-    const k = 1 - Math.exp((this.mode === 'cable' ? -2.5 : -3.4) * dt)
-    const k2 = 1 - Math.exp((this.mode === 'cable' ? -5.2 : -4.2) * dt)
+    // la cámara cable se desliza algo más lenta y pesada, como colgada de una guaya
+    const k = 1 - Math.exp((this.mode === 'cable' ? -2.9 : -3.4) * dt)
+    const k2 = 1 - Math.exp((this.mode === 'cable' ? -5.4 : -4.2) * dt)
     this.camPos.lerp(desired, k)
     this.camLook.lerp(look, k2)
 
